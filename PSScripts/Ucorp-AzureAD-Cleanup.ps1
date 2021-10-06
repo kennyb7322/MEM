@@ -1,4 +1,4 @@
-﻿#enter treshold days 
+﻿# Enter treshold days 
 $deletionTresholdDays= 60
 $path = "C:\Ucorp\AzureAD-Cleanup"
 

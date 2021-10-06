@@ -11,7 +11,3 @@ The device can NOT be joined. The process MUST run as NT AUTHORITY\SYSTEM
 
 C:\Windows\System32>psexec -s -i cmd
 dsregcmd /debug /join
-
-local account maken
-
-WSW
