@@ -1,0 +1,17 @@
+maak een local admin account
+1. dsregcmd /debug /leave
+2. Confirmation from Azure AD that device object was removed
+3. Reboot machine
+4. Confirmation that the device had been trying to register itself again to Azure AD (AAD audit logs)
+5. Confirmation of device status from AAD (changed from pending to "registered with timestamp")
+6. dsregcmd /status (which should now have PRT included)
+
+The device can NOT be joined. The process MUST run as NT AUTHORITY\SYSTEM
+
+
+C:\Windows\System32>psexec -s -i cmd
+dsregcmd /debug /join
+
+local account maken
+
+WSW
