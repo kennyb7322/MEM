@@ -43,12 +43,12 @@ function Send-O365MailMessage {
 }
 
 # Define email information details
-$AzureAutomationCredentialName = "MailUser"
-$MailRecipient = "recipient@domain.com"
-$MailFrom = "user@domain.com"
+$AzureAutomationCredentialName = "ucorp-mail-user"
+$MailRecipient = "mail@udirection.com"
+$MailFrom = "iuenk@ucorp.nl"
 
 # Define Azure Automation variables
-$AzureAutomationCredentialName = "MSIntuneAutomationUser"
+$AzureAutomationCredentialName = "ucorp-avd-sp"
 $AzureAutomationVariableAppClientID = "AppClientID"
 $AzureAutomationVariableTenantName = "TenantName"
 
