@@ -28,7 +28,7 @@ Param()
 $notificationTresholdDays = 30
 
 # Microsoft Teams Webhook URI
-$webHookUri = "https://outlook.office.com/webhook/7d5dcaef-5326-43a3-b83d-b601e19a5bd6@7955e1b3-cbad-49eb-9a84-e14aed7f3400/IncomingWebhook/0795975319dd4509b9c9f74a0f1de68f/36c9b091-fe88-4dc2-a9e1-2662020b4bab"
+$webHookUri = "https://outlook.office.com/webhook/example"
 
 # Connect to Microsoft Graph (option #1 via service principal)
 $servicePrincipalConnection = Get-AutomationConnection -Name "AzureRunAsConnection" -ErrorAction Stop
@@ -51,6 +51,7 @@ $organization =  Invoke-MSGraphRequest -HttpMethod GET -Url "organization"
 $orgDomain = $organization.value.verifiedDomains | Where-Object {$_.isInitial} | Select-Object -ExpandProperty name
 
 # optional mail configuration
+$creds = Get-AutomationPSCredential -Name "ucorp-mail-user"
 $mailConfig = @{
     SMTPServer = "smtp.office365.com"
     SMTPPort = "587"
@@ -215,7 +216,6 @@ $appleDepTokens | ForEach-Object {
     
         }else{
     
-            $creds = Get-AutomationPSCredential -Name $mailConfig.sender
             Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $creds 
         }
 
