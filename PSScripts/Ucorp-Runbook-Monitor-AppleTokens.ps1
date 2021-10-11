@@ -55,7 +55,7 @@ $creds = Get-AutomationPSCredential -Name "ucorp-mail-user"
 $mailConfig = @{
     SMTPServer = "smtp.office365.com"
     SMTPPort = "587"
-    Sender = "iuenk@ucorp.nl"
+    Sender = "automation@ucorp.nl"
     Recipients = @("mail@udirection.com", "mail@ivouenk.nl")
     Header = "Apple token expiration in MEMCM for tenant: $orgDomain"
 }
