@@ -141,7 +141,6 @@ if ($notificationTreshold -ge $applePushNotificationCertificate.expirationDateTi
 
     }else{
 
-        $creds = Get-AutomationPSCredential -Name "ucorp-mail-user"
         Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $bodyTemplate -Credential $creds -BodyAsHtml
     }
 }else{
@@ -175,8 +174,7 @@ $appleVppTokens | ForEach-Object {
             $request = Invoke-WebRequest -Method Post -Uri $webHookUri -Body $bodyTemplate -UseBasicParsing
     
         }else{
-    
-            $creds = Get-AutomationPSCredential -Name $mailConfig.sender
+
             Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $creds 
         }
     }else{
