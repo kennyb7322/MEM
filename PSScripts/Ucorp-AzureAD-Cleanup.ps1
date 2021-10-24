@@ -4,8 +4,8 @@ $path = "C:\Ucorp\AzureAD-Cleanup"
 
 # Set Configs
 $TenantId = "<TenantId>"
-$AzureUser = "automation@ucorp.nl" 
-$AzurePass = ConvertTo-SecureString "Password" -AsPlainText -Force
+$AzureUser = "" 
+$AzurePass = ConvertTo-SecureString "" -AsPlainText -Force
 
 # Connect to Azure AD
 $AzureCred = New-Object -TypeName "System.Management.Automation.PSCredential" -ArgumentList $AzureUser, $AzurePass
