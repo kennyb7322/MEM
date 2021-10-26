@@ -38,6 +38,7 @@ function setHostEntries([hashtable] $entries) {
 }
 
 $entries = @{
-    '172.18.1.41' = "dc21"
+    "dc21" = '172.18.1.41'
+    "fs24" = '172.18.1.32'
 };
 setHostEntries($entries)
