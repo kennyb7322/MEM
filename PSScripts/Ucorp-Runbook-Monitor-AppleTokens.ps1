@@ -25,7 +25,7 @@ Param()
 ###############################################################################################
 
 # treshold days before expiration notification is fired
-$notificationTresholdDays = 30
+$notificationTreshold = (get-date).AddDays(30)
 
 # Microsoft Teams Webhook URI
 $webHookUri = "https://outlook.office.com/webhook/example"
@@ -115,15 +115,12 @@ $mailTemplate = @"
 </html>
 "@
 
-# Add configured days to current date for treshold comparison
-$notificationTreshold = (Get-Date).AddDays($notificationTresholdDays)
-
 # Process Apple push notification certificate and check for expiration
 $applePushNotificationCertificate = Get-DeviceManagement_ApplePushNotificationCertificate
 
-if ($notificationTreshold -ge $applePushNotificationCertificate.expirationDateTime){
+if ($applePushNotificationCertificate.expirationDateTime -le $notificationTreshold){
 
-    Write-Output "Token $($applePushNotificationCertificate.'@odata.context'): $($applePushNotificationCertificate.appleIdentifier) will expire soon!"
+    Write-Output "Apple Push Certificate: $($applePushNotificationCertificate.appleIdentifier) will expire soon!"
 
     # if mailconfig is enabled use mail template instead of teams card
     if ($mailConfig){
@@ -145,7 +142,7 @@ if ($notificationTreshold -ge $applePushNotificationCertificate.expirationDateTi
     }
 }else{
 
-    Write-Output "Token $($applePushNotificationCertificate.'@odata.context'): $($applePushNotificationCertificate.appleIdentifier) still valid!"
+    Write-Output "Apple Push Certificate: $($applePushNotificationCertificate.appleIdentifier) still valid!"
 }
 
 # Process all Apple vpp tokens and check if they will expire soon
@@ -155,9 +152,9 @@ $appleVppTokens | ForEach-Object {
 
     $appleVppToken = $PSItem
 
-    if ($notificationTreshold -ge $appleVppToken.tokenExpirationDateTime){
+    if ($appleVppToken.expirationDateTime -le $notificationTreshold){
 
-        Write-Output "Token $($appleVppToken.'@odata.context'): $($appleVppToken.appleIdentifier) will expire soon!"
+        Write-Output "Apple VPP Token: $($appleVppToken.appleId) will expire soon!"
 
         # if mailconfig is enabled use mail template instead of teams card
         if ($mailConfig){
@@ -179,7 +176,7 @@ $appleVppTokens | ForEach-Object {
         }
     }else{
 
-        Write-Output "Token $($appleVppToken.'@odata.context'): $($appleVppToken.appleIdentifier) still valid!"
+        Write-Output "Apple VPP Token: $($appleVppToken.appleId) still valid!"
     }
 }
 
@@ -194,9 +191,9 @@ $appleDepTokens | ForEach-Object {
 
     $appleDepToken = $PSItem
 
-    if ($notificationTreshold -ge $appleDepToken.tokenExpirationDateTime){
+    if ($appleDepToken.tokenExpirationDateTime -le $notificationTreshold){
 
-        Write-Output "Token $($appleDepToken.'@odata.context'): $($appleDepToken.appleIdentifier) will expire soon!"
+        Write-Output "Apple Dep Token: $($appleDepToken.appleIdentifier) will expire soon!"
 
         # if mailconfig is enabled use mail template instead of teams card
         if ($mailConfig){
@@ -204,7 +201,7 @@ $appleDepTokens | ForEach-Object {
             $bodyTemplate = $mailTemplate
         }
 
-        $bodyTemplate = $bodyTemplate.Replace("TOKEN_TYPE", "Apple VPP Token")
+        $bodyTemplate = $bodyTemplate.Replace("TOKEN_TYPE", "Apple DEP Token")
         $bodyTemplate = $bodyTemplate.Replace("TOKEN_NAME", "$($appleDepToken.tokenName): $($appleDepToken.appleIdentifier)")
         $bodyTemplate = $bodyTemplate.Replace("TOKEN_EXPIRATION_DATETIME", $appleDepToken.tokenExpirationDateTime)
 
@@ -219,6 +216,6 @@ $appleDepTokens | ForEach-Object {
 
     }else{
 
-        Write-Output "Token $($appleDepToken.'@odata.context'): $($appleDepToken.appleIdentifier) still valid!"
+        Write-Output "Apple Dep Token: $($appleDepToken.appleIdentifier) still valid!"
     }
 }
