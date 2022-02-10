@@ -27,6 +27,12 @@ Param()
 # treshold days before expiration notification is fired
 $notificationTreshold = (get-date).AddDays(30)
 
+# Get the credential from Automation  
+$credential = Get-AutomationPSCredential -Name 'AutomationCreds'  
+$userName = $credential.UserName  
+$securePassword = $credential.Password
+$psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword
+
 # Microsoft Teams Webhook URI
 $webHookUri = "https://outlook.office.com/webhook/example"
 
@@ -51,7 +57,6 @@ $organization =  Invoke-MSGraphRequest -HttpMethod GET -Url "organization"
 $orgDomain = $organization.value.verifiedDomains | Where-Object {$_.isInitial} | Select-Object -ExpandProperty name
 
 # optional mail configuration
-$creds = Get-AutomationPSCredential -Name "ucorp-mail-user"
 $mailConfig = @{
     SMTPServer = "smtp.office365.com"
     SMTPPort = "587"
@@ -138,7 +143,7 @@ if ($applePushNotificationCertificate.expirationDateTime -le $notificationTresho
 
     }else{
 
-        Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $bodyTemplate -Credential $creds -BodyAsHtml
+        Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $bodyTemplate -Credential $psCredential -BodyAsHtml
     }
 }else{
 
@@ -172,7 +177,7 @@ $appleVppTokens | ForEach-Object {
     
         }else{
 
-            Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $creds 
+            Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $psCredential 
         }
     }else{
 
@@ -211,7 +216,7 @@ $appleDepTokens | ForEach-Object {
     
         }else{
     
-            Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $creds 
+            Send-MailMessage -UseSsl -From $mailConfig.Sender -To $mailConfig.Recipients -SmtpServer $mailConfig.SMTPServer -Port $mailConfig.SMTPPort -Subject $mailConfig.Header -Body $mailTemplate -Credential $psCredential 
         }
 
     }else{
