@@ -27,7 +27,7 @@ if ((!($regexist)) -or ($regexist.$RegCheck -lt $Version)) {
             Write-Output "Directory does not exist"
         }
     }catch{
-        write-errror 'unable to install default choco apps'
+        write-error 'unable to install default choco apps'
         break 
     }
 
