@@ -75,8 +75,8 @@ try {
 $JSON_Windows10_Upd = @"
     {
     "@odata.type": "#microsoft.graph.windows10CompliancePolicy",
-    "description": "Default | W10 | Compliance Rule - create test4",
-    "displayName": "Default | W10 | Compliance Rule - create test4",
+    "description": "Default | W10 | Compliance Rule Test",
+    "displayName": "Default | W10 | Compliance Rule Test",
     "passwordMinimumLength": 12,
     "passwordMinimumCharacterSetCount": 8,
     "osMinimumVersion": "10.0.18362.657"
