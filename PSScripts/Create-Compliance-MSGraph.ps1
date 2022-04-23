@@ -1,4 +1,5 @@
 Import-Module AzureADPreview
+Import-Module ADAL.PS
 
 $appId='$appId'
 $appSecret='appSecret'
