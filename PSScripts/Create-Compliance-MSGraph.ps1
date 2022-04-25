@@ -61,24 +61,24 @@ $JSON_Windows10 = @"
 "@
 
 
-try {
-    $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)/a2de9bda-ffed-4527-96d7-d6f3ac10da8c"
-    Invoke-RestMethod -Uri $uri -Headers $authToken -Method Patch -Body $JSON_Windows10_Upd -ContentType "application/json"
-}catch {
-    Write-Host
-    $ex = $_.Exception
-    Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
-    write-host
-    break
-}
+#try {
+#    $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)/a2de9bda-ffed-4527-96d7-d6f3ac10da8c"
+#    Invoke-RestMethod -Uri $uri -Headers $authToken -Method Patch -Body $JSON_Windows10_Upd -ContentType "application/json"
+#}catch {
+#    Write-Host
+#    $ex = $_.Exception
+#    Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+#    write-host
+#    break
+#}
 
-$JSON_Windows10_Upd = @"
-    {
-    "@odata.type": "#microsoft.graph.windows10CompliancePolicy",
-    "description": "Default | W10 | Compliance Rule Test",
-    "displayName": "Default | W10 | Compliance Rule Test",
-    "passwordMinimumLength": 12,
-    "passwordMinimumCharacterSetCount": 8,
-    "osMinimumVersion": "10.0.18362.657"
-    }
-"@
+#$JSON_Windows10_Upd = @"
+#    {
+#    "@odata.type": "#microsoft.graph.windows10CompliancePolicy",
+#    "description": "Default | W10 | Compliance Rule Test",
+#    "displayName": "Default | W10 | Compliance Rule Test",
+#    "passwordMinimumLength": 12,
+#    "passwordMinimumCharacterSetCount": 8,
+#    "osMinimumVersion": "10.0.18362.657"
+#    }
+#"@
