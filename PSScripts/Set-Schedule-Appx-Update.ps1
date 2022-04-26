@@ -21,8 +21,8 @@ if ((!($regexist)) -or ($regexist.$RegCheck -lt $Version)) {
         }
         try{
             $A = New-ScheduledTaskAction -Execute "Powershell" -Argument "-command & {Get-CimInstance -Namespace Root\cimv2\mdm\dmmap -ClassName MDM_EnterpriseModernAppManagement_AppManagement01 | Invoke-CimMethod -MethodName UpdateScanMethod}"
-            $T = New-ScheduledTaskTrigger -AtLogOn
-            $P = New-ScheduledTaskPrincipal -UserId (Get-CimInstance –ClassName Win32_ComputerSystem | Select-Object -expand UserName)
+            $T = New-ScheduledTaskTrigger -AtStartup
+            $P = New-ScheduledTaskPrincipal -UserId 'system'
             $S = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
             $D = New-ScheduledTask -Action $A -Principal $P -Trigger $T -Settings $S
             Register-ScheduledTask  -TaskName "$TaskFolder\$TaskName" -InputObject $D -ErrorAction Stop
