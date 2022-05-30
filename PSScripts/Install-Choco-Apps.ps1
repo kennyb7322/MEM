@@ -16,7 +16,6 @@ if ((!($regexist)) -or ($regexist.$RegCheck -lt $Version)) {
         Set-ExecutionPolicy Bypass -Scope Process -Force
         Invoke-Expression ((new-object net.webclient).DownloadString('https://chocolatey.org/install.ps1'))
     
-        choco install chocolateygui -y
 	    choco install adobereader -params '"/NoUpdates"' -y
         choco install googlechrome -y
 	    choco install Firefox --params "/l:nl-NL /NoDesktopShortcut /NoMaintenanceService /RemoveDistributionDir" -y
