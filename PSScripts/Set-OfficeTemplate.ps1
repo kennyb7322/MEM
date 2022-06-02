@@ -1,5 +1,5 @@
-$urlTemplate = 'https://ucorpstorage.blob.core.windows.net/m365filerepo/OfficeTemplates-190524.exe?sp=r&st=2022-06-02T09:10:12Z&se=2026-06-02T17:10:12Z&spr=https&sv=2020-08-04&sr=b&sig=j9QUDoQ8DvyAqSM2IJlIiokPxEeUJVRCHicgFWYinVY%3D'
-$urlSignature = 'https://ucorpstorage.blob.core.windows.net/m365filerepo/Signatures-190524.exe?sp=r&st=2022-06-02T09:11:33Z&se=2026-06-02T17:11:33Z&spr=https&sv=2020-08-04&sr=b&sig=FrE3e1WGlWnqV1JPQOiy953zpDbr%2BYXi6UXK0k9c8e4%3D'
+$urlTemplate = 'SAS URL'
+$urlSignature = 'SAS URL'
 
 if (Test-Path "$env:TMP\signature.exe") {
     Remove-Item "$env:TMP\signature.exe"
