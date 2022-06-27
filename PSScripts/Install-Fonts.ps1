@@ -1,4 +1,5 @@
 ﻿$path = "C:\Packages"
+mkdir $path -ErrorAction SilentlyContinue
 
 $fontsUri = 'https://ucorpavdstd.blob.core.windows.net/ucorpavdrepo/Fonts.zip?sp=r&st=2021-09-27T21:07:48Z&se=2024-09-28T05:07:48Z&spr=https&sv=2020-08-04&sr=b&sig=SNXRogZ0%2Bz5aaT25GgD2BYRMkxWbX9miBNEwlhA2qGc%3D'
 $FontsFile = "Fonts.zip"
@@ -18,10 +19,9 @@ if ((!($regexist)) -or ($regexist.Fonts -lt 2) ) {
     try{
         Invoke-WebRequest -Uri $fontsUri -OutFile "$path\$fontsfile"
         Expand-Archive "$path\$fontsfile" -DestinationPath $path
-        $FontFolder = "$path\Fonts"
 
-        cd "$path\Fonts"
-        $fonts = ls *.ttf
+        Set-Location "$path\Fonts"
+        $fonts = Get-ChildItem *.ttf
         $fonts.ForEach({.\add-font.ps1 $_.name})
     
     }catch{

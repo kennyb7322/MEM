@@ -7,7 +7,7 @@ if (Test-Path HKCU:\Software\Ucorp) {
     New-Item HKCU:\Software\Ucorp
 }    
 
-if (Get-Process | ? {$_.name -like 'chrome'}){
+if (Get-Process | Where-Object {$_.name -like 'chrome'}){
     Write-Error 'chrome is active' -ErrorAction Stop
     break
 }
@@ -19,9 +19,9 @@ if ((!($regexist)) -or ($regexist.templates -lt 2) ) {
     if(Test-Path $path){
         $prefContent = Get-Content $path -Encoding utf8
         $prefs = ConvertFrom-Json $prefContent
-        If(($prefs | gm).name -contains "download") #if the download node exists
+        If(($prefs | Get-Member).name -contains "download") #if the download node exists
         {
-            If(($prefs.download | gm).name -contains "extensions_to_open") #sometimes the download node doesn't have the extensions_to_open child
+            If(($prefs.download | Get-Member).name -contains "extensions_to_open") #sometimes the download node doesn't have the extensions_to_open child
             {
                 If($prefs.download.extensions_to_open) #if it has value, grab the contents
                 {

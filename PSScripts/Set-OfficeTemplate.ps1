@@ -1,5 +1,5 @@
-$urlTemplate = 'https://intunefilerepo.blob.core.windows.net/intunefilerepo/UcorpOfficeTemplates-190524.exe?st=2019-07-23T13%3A29%3A04Z&se=2023-07-24T13%3A29%3A00Z&sp=rl&sv=2018-03-28&sr=b&sig=z5PIoYDQIMA7ev0%2FOotg%2Bqi5KL7fZIljxQ4aVDAlTFs%3D'
-$urlSignature = 'https://intunefilerepo.blob.core.windows.net/intunefilerepo/UcorpSignatures-190524.exe?st=2019-07-23T13%3A29%3A41Z&se=2023-07-24T13%3A29%3A00Z&sp=rl&sv=2018-03-28&sr=b&sig=UCkFg7xTC2ydyckGttLgHfvEzTdhorjcpsaH5CpVSjY%3D'
+$urlTemplate = 'SAS URL'
+$urlSignature = 'SAS URL'
 
 if (Test-Path "$env:TMP\signature.exe") {
     Remove-Item "$env:TMP\signature.exe"
