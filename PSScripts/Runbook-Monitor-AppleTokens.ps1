@@ -22,8 +22,6 @@ This script monitors apple token expiration in MEMCM (Intune) and checks if DEP,
 
 Param()
 
-###############################################################################################
-
 # treshold days before expiration notification is fired
 $notificationTreshold = (get-date).AddDays(30)
 
@@ -33,24 +31,7 @@ $userName = $credential.UserName
 $securePassword = $credential.Password
 $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword
 
-# Microsoft Teams Webhook URI
-$webHookUri = "https://outlook.office.com/webhook/example"
-
-# Connect to Microsoft Graph (option #1 via service principal)
-$servicePrincipalConnection = Get-AutomationConnection -Name "AzureRunAsConnection" -ErrorAction Stop
-Update-MSGraphEnvironment -AuthUrl "https://login.microsoftonline.com/$($servicePrincipalConnection.TenantId)" -AppId $servicePrincipalConnection.ApplicationId
-Connect-MSGraph -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint -Quiet
-
-# Connect to Microsoft Graph (option #2 via application & client secret)
-#$tenant = ""
-#$authority = ""
-#$clientId = ""
-#$clientSecret = ""
-#Update-MSGraphEnvironment -AppId $clientId -Quiet
-#Update-MSGraphEnvironment -AuthUrl $authority -Quiet
-#Connect-MSGraph -ClientSecret $ClientSecret -Quiet
-
-###############################################################################################
+Connect-MSGraph -Credential $psCredential
 
 # Get initial domain name to display as tenant name on teams card
 $organization =  Invoke-MSGraphRequest -HttpMethod GET -Url "organization"
@@ -61,7 +42,7 @@ $mailConfig = @{
     SMTPServer = "smtp.office365.com"
     SMTPPort = "587"
     Sender = "automation@ucorp.nl"
-    Recipients = @("mail@ivouenk.nl")
+    Recipients = @("mail@udirection.com")
     Header = "Apple token expiration in MEMCM for tenant: $orgDomain"
 }
 
@@ -187,8 +168,6 @@ $appleVppTokens | ForEach-Object {
 
 # Process all Apple DEP Tokens (we have to switch to the beta endpoint)
 Update-MSGraphEnvironment -SchemaVersion "Beta" -Quiet
-Connect-MSGraph -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint -Quiet
-#Connect-MSGraph -ClientSecret $ClientSecret -Quiet
 
 $appleDepTokens = (Invoke-MSGraphRequest -HttpMethod GET -Url "deviceManagement/depOnboardingSettings").value
 
