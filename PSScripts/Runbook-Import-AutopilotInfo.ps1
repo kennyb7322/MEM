@@ -1,4 +1,4 @@
- #Requires -Module  AzAccount, AzureAD
+#Requires -Module  AzAccount, AzureAD
 
 <#PSScriptInfo
 .VERSION 1.0
