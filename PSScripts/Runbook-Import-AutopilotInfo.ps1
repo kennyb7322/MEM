@@ -20,24 +20,32 @@ The script is provided "AS IS" with no warranties.
 # https://www.powershellgallery.com/packages/WindowsAutoPilotIntune
 # modified to support unattended authentication within a runbook
 
-# Connect
-Login-AzureRmAccount -Credential $intuneAutomationCredential | Out-Null
-
-# Get Credentials an Automation variables
-$credential = Get-AutomationPSCredential -Name 'AutomationCreds'  
+# Get automation account credentials
+$credential = Get-AutomationPSCredential -Name 'AutomationCreds' 
 $userName = $credential.UserName  
 $securePassword = $credential.Password
 $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword
+
+# Connect to Microsoft services
+Connect-AzAccount -Credential $psCredential
+Connect-AzureAD -Credential $psCredential
+
+# Get MS graph API connection
+$TenantID = Get-AutomationVariable -Name 'TenantId' 
+$AppId = Get-AutomationVariable -Name 'AppId' 
+$AppSecret = Get-AutomationVariable -Name 'AppSecret'
+
+$authString = "https://login.microsoftonline.com/$TenantID" 
+$authContext = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext"-ArgumentList $authString
+$creds = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.ClientCredential" -ArgumentList $AppId, $AppSecret
+$context = $authContext.AcquireTokenAsync("https://graph.microsoft.com/", $creds).Result
+$AccessToken = $context.AccessToken
+
+# Get connection info for storage account
 $StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
 $ContainerName = Get-AutomationVariable -Name 'ContainerName'
 $StorageKey = Get-AutomationVariable -Name 'StorageKey'
 $accountContext = New-AzureStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
-
-Connect-MSGraph -Credential $psCredential
-Connect-AzureAD -Credential $psCredential   
-
-$PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
 
 Function Get-AutoPilotDevice(){
     [cmdletbinding()]
@@ -57,7 +65,7 @@ Function Get-AutoPilotDevice(){
             $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
         }
         try {
-            $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get
+            $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get).value
             if ($id) {
                 $response
             }
@@ -82,7 +90,6 @@ Function Get-AutoPilotDevice(){
     
     }
     
-
 Function Get-AutoPilotImportedDevice(){
 [cmdletbinding()]
 param
@@ -101,7 +108,7 @@ param
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     }
     try {
-        $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get
+        $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get).value
         if ($id) {
             $response
         }
@@ -160,7 +167,7 @@ Function Add-AutoPilotImportedDevice(){
 "@
 
         try {
-            Invoke-RestMethod -Uri $uri -Headers $authToken -Method Post -Body $json -ContentType "application/json"
+            (Invoke-RestMethod -Uri $uri -Headers -Body $json -ContentType "application/json" @{"Authorization" = "Bearer $AccessToken"} -Method Post).Value
         }
         catch {
     
@@ -179,7 +186,6 @@ Function Add-AutoPilotImportedDevice(){
     
     }
 
-    
 Function Remove-AutoPilotImportedDevice(){
     [cmdletbinding()]
     param
@@ -193,7 +199,7 @@ Function Remove-AutoPilotImportedDevice(){
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
 
         try {
-            Invoke-RestMethod -Uri $uri -Headers $authToken -Method Delete | Out-Null
+            (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Delete).Value | Out-Null
         }
         catch {
     
@@ -211,8 +217,6 @@ Function Remove-AutoPilotImportedDevice(){
         }
         
 }
-
-####################################################
 
 Function Import-AutoPilotCSV(){
     [cmdletbinding()]
@@ -300,7 +304,7 @@ param
 
     $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     try {
-        $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Post
+        $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post).Value
         $response.Value
     }
     catch {
@@ -326,12 +330,12 @@ $CurrentJobId= $PSPrivateMetadata.JobId.Guid
 Write-Output "Current Job ID: '$CurrentJobId'"
 
 #Get Automation account and resource group names
-$AutomationAccounts = Find-AzureRmResource -ResourceType "Microsoft.Automation/AutomationAccounts"
+$AutomationAccounts = Get-AzAutomationAccount
 foreach ($item in $AutomationAccounts) {
     # Loop through each Automation account to find this job
-    $Job = Get-AzureRmAutomationJob -ResourceGroupName $item.ResourceGroupName -AutomationAccountName $item.Name -Id $CurrentJobId -ErrorAction SilentlyContinue
+    $Job = Get-AzAutomationJob -ResourceGroupName $item.ResourceGroupName -AutomationAccountName $item.AutomationAccountName -Id $CurrentJobId -ErrorAction SilentlyContinue
     if ($Job) {
-        $AutomationAccountName = $item.Name
+        $AutomationAccountName = $item.AutomationAccountName
         $ResourceGroupName = $item.ResourceGroupName
         $RunbookName = $Job.RunbookName
         break
@@ -343,7 +347,7 @@ Write-Output "Runbook Name: '$RunbookName'"
 
 #Check if the runbook is already running
 if ($RunbookName) {
-    $CurrentRunningJobs = Get-AzureRmAutomationJob -ResourceGroupName $ResourceGroupName -AutomationAccountName $AutomationAccountName -RunbookName $RunbookName | Where-object {($_.Status -imatch '\w+ing$' -or $_.Status -imatch 'queued') -and $_.JobId.tostring() -ine $CurrentJobId}
+    $CurrentRunningJobs = Get-AzAutomationJob -ResourceGroupName $ResourceGroupName -AutomationAccountName $AutomationAccountName -RunbookName $RunbookName | Where-object {($_.Status -imatch '\w+ing$' -or $_.Status -imatch 'queued') -and $_.JobId.tostring() -ine $CurrentJobId}
     If ($CurrentRunningJobs) {
         Write-output "Active runbook job detected."
         Foreach ($job in $CurrentRunningJobs) {
@@ -361,6 +365,9 @@ else {
 }
 
 # Main logic
+$PathCsvFiles = "$env:TEMP"
+$CombinedOutput = "$pathCsvFiles\combined.csv"
+
 $countOnline = $(Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Measure-Object).Count
 if ($countOnline -gt 0) {
     Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Get-AzureStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
@@ -398,7 +405,7 @@ if (Test-Path $CombinedOutput) {
     }
     $serialNumber = $null
 
-    $csvBlobs = Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob 
+    $csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob 
     ForEach ($csvBlob in $csvBlobs) {
         $serialNumber = $downloadFilesSearchableByName[$csvBlob.Name]
 
@@ -416,7 +423,7 @@ if (Test-Path $CombinedOutput) {
             }
             
             if (-not $isErrorDevice -or $isSafeToDelete) {
-                Remove-AzureStorageBlob -Container $ContainerName -Blob $csvBlob.Name-Context $accountContext
+                Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name-Context $accountContext
             }
         }
     }
