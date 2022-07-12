@@ -1,24 +1,23 @@
-<#
-Version: 1.0
-Author:  Oliver Kieselbach
-Runbook: Import-AutoPilotInfo
+ #Requires -Module  AzAccount, AzureAD
 
-Description:
-Get AutoPilot device information from Azure Blob Storage and import device to Intune 
-AutoPilot service via Intune API running from a Azure Automation runbook.
-Cleanup Blob Storage and send import notification to a Microsoft Teams channel.
+<#PSScriptInfo
+.VERSION 1.0
+.AUTHOR Ivo Uenk
+.RELEASENOTES
 
-Release notes:
-Version 1.0: Original published version.
-
-The script is provided "AS IS" with no warranties.
 #>
-
-####################################################
-
-# Based on PowerShell Gallery WindowsAutoPilotIntune 
-# https://www.powershellgallery.com/packages/WindowsAutoPilotIntune
-# modified to support unattended authentication within a runbook
+<#
+.SYNOPSIS
+Get HardwareID's from Blob storage and import in MEM.
+.DESCRIPTION
+Get AutoPilot device information from Azure Blob Storage and import device in MEM.
+AutoPilot service via Intune API running from a Azure Automation runbook and Cleanup Blob Storage.
+.NOTES
+  Version:        1.0
+  Author:         Ivo Uenk
+  Creation Date:  2022-07-09
+  Purpose/Change: Initial script development
+#>
 
 # Get automation account credentials
 $credential = Get-AutomationPSCredential -Name 'AutomationCreds' 
@@ -45,7 +44,7 @@ $AccessToken = $context.AccessToken
 $StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
 $ContainerName = Get-AutomationVariable -Name 'ContainerName'
 $StorageKey = Get-AutomationVariable -Name 'StorageKey'
-$accountContext = New-AzureStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
+$accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
 
 Function Get-AutoPilotDevice(){
     [cmdletbinding()]
@@ -65,7 +64,7 @@ Function Get-AutoPilotDevice(){
             $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
         }
         try {
-            $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get).value
+            $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get
             if ($id) {
                 $response
             }
@@ -108,7 +107,7 @@ param
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     }
     try {
-        $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get).value
+        $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get
         if ($id) {
             $response
         }
@@ -167,7 +166,7 @@ Function Add-AutoPilotImportedDevice(){
 "@
 
         try {
-            (Invoke-RestMethod -Uri $uri -Headers -Body $json -ContentType "application/json" @{"Authorization" = "Bearer $AccessToken"} -Method Post).Value
+            Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post -Body $json -ContentType "application/json"
         }
         catch {
     
@@ -199,7 +198,7 @@ Function Remove-AutoPilotImportedDevice(){
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
 
         try {
-            (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Delete).Value | Out-Null
+            Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Delete | Out-Null
         }
         catch {
     
@@ -304,7 +303,7 @@ param
 
     $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     try {
-        $response = (Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post).Value
+        $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post
         $response.Value
     }
     catch {
@@ -368,9 +367,9 @@ else {
 $PathCsvFiles = "$env:TEMP"
 $CombinedOutput = "$pathCsvFiles\combined.csv"
 
-$countOnline = $(Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Measure-Object).Count
+$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Measure-Object).Count
 if ($countOnline -gt 0) {
-    Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Get-AzureStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
+    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
 
     # Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
     $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
