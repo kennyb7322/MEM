@@ -19,31 +19,84 @@ AutoPilot service via Intune API running from a Azure Automation runbook and Cle
   Purpose/Change: Initial script development
 #>
 
-# Get automation account credentials
-$credential = Get-AutomationPSCredential -Name 'AutomationCreds' 
-$userName = $credential.UserName  
-$securePassword = $credential.Password
-$psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword
-
-# Connect to Microsoft services
-Connect-AzAccount -Credential $psCredential
-Connect-AzureAD -Credential $psCredential
-
-# Get MS graph API connection
-$TenantID = Get-AutomationVariable -Name 'TenantId' 
-$AppId = Get-AutomationVariable -Name 'AppId' 
-$AppSecret = Get-AutomationVariable -Name 'AppSecret'
-
-$authString = "https://login.microsoftonline.com/$TenantID" 
-$authContext = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext"-ArgumentList $authString
-$creds = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.ClientCredential" -ArgumentList $AppId, $AppSecret
-$context = $authContext.AcquireTokenAsync("https://graph.microsoft.com/", $creds).Result
-$AccessToken = $context.AccessToken
+$intuneAutomationCredential = Get-AutomationPSCredential -Name 'AutomationCreds'
+$userName = $intuneAutomationCredential.UserName  
+$securePassword = $intuneAutomationCredential.Password
+$psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword 
+$intuneAutomationAppId = Get-AutomationVariable -Name Microsoft Graph PowerShell
+$tenant = Get-AutomationVariable -Name TenantId
 
 # Get connection info for storage account
 $StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
 $ContainerName = Get-AutomationVariable -Name 'ContainerName'
 $StorageKey = Get-AutomationVariable -Name 'StorageKey'
+
+function Get-AuthToken {
+
+    try {
+        $AadModule = Import-Module -Name AzureAD -ErrorAction Stop -PassThru
+    }
+    catch {
+        throw 'AzureAD PowerShell module is not installed!'
+    }
+
+    $intuneAutomationCredential = Get-AutomationPSCredential -Name automation
+    $intuneAutomationAppId = Get-AutomationVariable -Name IntuneClientId
+    $tenant = Get-AutomationVariable -Name Tenant
+
+    $adal = Join-Path $AadModule.ModuleBase "Microsoft.IdentityModel.Clients.ActiveDirectory.dll"
+    $adalforms = Join-Path $AadModule.ModuleBase "Microsoft.IdentityModel.Clients.ActiveDirectory.Platform.dll"
+    [System.Reflection.Assembly]::LoadFrom($adal) | Out-Null
+    [System.Reflection.Assembly]::LoadFrom($adalforms) | Out-Null
+    $redirectUri = "urn:ietf:wg:oauth:2.0:oob"
+    $resourceAppIdURI = "https://graph.microsoft.com" 
+    $authority = "https://login.microsoftonline.com/$tenant"
+        
+    try {
+        $authContext = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext" -ArgumentList $authority 
+        $platformParameters = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.PlatformParameters" -ArgumentList "Auto"
+        $userId = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.UserIdentifier" -ArgumentList ($intuneAutomationCredential.Username, "OptionalDisplayableId")   
+        $userCredentials = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.UserPasswordCredential -ArgumentList $intuneAutomationCredential.Username, $intuneAutomationCredential.Password
+        $authResult = [Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContextIntegratedAuthExtensions]::AcquireTokenAsync($authContext, $resourceAppIdURI, $intuneAutomationAppId, $userCredentials);
+
+        if ($authResult.Result.AccessToken) {
+            $authHeader = @{
+                'Content-Type'  = 'application/json'
+                'Authorization' = "Bearer " + $authResult.Result.AccessToken
+                'ExpiresOn'     = $authResult.Result.ExpiresOn
+            }
+            return $authHeader
+        }
+        elseif ($authResult.Exception) {
+            throw "An error occured getting access token: $($authResult.Exception.InnerException)"
+        }
+    }
+    catch { 
+        throw $_.Exception.Message 
+    }
+}
+
+
+function Connect-AutoPilotIntune {
+
+    if($global:authToken){
+        $DateTime = (Get-Date).ToUniversalTime()
+        $TokenExpires = ($authToken.ExpiresOn.datetime - $DateTime).Minutes
+
+        if($TokenExpires -le 0){
+            Write-Output "Authentication Token expired" $TokenExpires "minutes ago"
+            $global:authToken = Get-AuthToken
+        }
+    }
+    else {
+        $global:authToken = Get-AuthToken
+    }
+}
+
+# Connect to Microsoft services
+Connect-AzAccount -Credential $psCredential
+
+# Get connection info for storage account
 $accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
 
 Function Get-AutoPilotDevice(){
