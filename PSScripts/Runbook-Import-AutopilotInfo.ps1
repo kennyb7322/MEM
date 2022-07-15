@@ -23,7 +23,7 @@ $intuneAutomationCredential = Get-AutomationPSCredential -Name 'AutomationCreds'
 $userName = $intuneAutomationCredential.UserName  
 $securePassword = $intuneAutomationCredential.Password
 $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword 
-$intuneAutomationAppId = Get-AutomationVariable -Name Microsoft Graph PowerShell
+$intuneAutomationAppId = Get-AutomationVariable -Name Microsoft Intune PowerShell
 $tenant = Get-AutomationVariable -Name TenantId
 
 # Get connection info for storage account
