@@ -193,6 +193,7 @@ Function Add-AutoPilotImportedDevice(){
     (
         [Parameter(Mandatory=$true)] $serialNumber,
         [Parameter(Mandatory=$true)] $hardwareIdentifier,
+        [Parameter(Mandatory=$true)] $groupTag,
         [Parameter(Mandatory=$false)] $orderIdentifier = ""
     )
     
@@ -208,6 +209,7 @@ Function Add-AutoPilotImportedDevice(){
     "serialNumber": "$serialNumber",
     "productKey": "",
     "hardwareIdentifier": "$hardwareIdentifier",
+    "grouptag": "$groupTag",
     "state": {
         "@odata.type": "microsoft.graph.importedWindowsAutopilotDeviceIdentityState",
         "deviceImportStatus": "pending",
@@ -287,8 +289,26 @@ Function Import-AutoPilotCSV(){
 
         # Read CSV and process each device
         $devices = Import-CSV $csvFile
+
         foreach ($device in $devices) {
-            Add-AutoPilotImportedDevice -serialNumber $device.'Device Serial Number' -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier
+
+        # Check if Group Tag is set correctly
+        $i = $device.'Group Tag'
+        $d = $i.substring(0,11) # A-CDS-O-P-L
+        $c = $i.Split("-")[-2] # NL
+        $e = $i.Split("-")[-1] # 00
+
+            if (($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){
+                Add-AutoPilotImportedDevice `
+                    -serialNumber $device.'Device Serial Number' `
+                    -hardwareIdentifier $device.'Hardware Hash' `
+                    -orderIdentifier $orderIdentifier `
+                    -groupTag $device.'Group Tag'
+            }
+
+            else {
+            Write-Output "Group Tag not set correctly for $($device.'Device Serial Number')"
+            }
         }
 
         # While we could keep a list of all the IDs that we added and then check each one, it is 
@@ -445,7 +465,7 @@ if (Test-Path $CombinedOutput) {
     $importTotalTime = "$($importTotalTime.Hours):$($importTotalTime.Minutes):$($importTotalTime.Seconds)s"
 
     # Online blob storage cleanup, leave error device .csv files there expect it's ZtdDeviceAlreadyAssigned error
-    # in case of error someone needs to check manually but we inform via Teams message later in the runbook
+    # in case of error someone needs to check manually
     $downloadFilesSearchableByName = @{}
     $downloadFilesSearchableBySerialNumber = @{}
 
