@@ -19,6 +19,8 @@ AutoPilot service via Intune API running from a Azure Automation runbook and Cle
   Purpose/Change: Initial script development
 #>
 
+##################################################################### Start Connection #####################################################################
+
 $intuneAutomationCredential = Get-AutomationPSCredential -Name 'AutomationCreds'
 $userName = $intuneAutomationCredential.UserName  
 $securePassword = $intuneAutomationCredential.Password
@@ -76,7 +78,6 @@ function Get-AuthToken {
     }
 }
 
-
 function Connect-AutoPilotIntune {
 
     if($global:authToken){
@@ -98,7 +99,50 @@ Connect-AzAccount -Credential $psCredential
 
 # Get connection info for storage account
 $accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
+# End Connection
 
+##################################################################### Check if job is already in progress #####################################################################
+
+$CurrentJobId= $PSPrivateMetadata.JobId.Guid
+Write-Output "Current Job ID: '$CurrentJobId'"
+
+#Get Automation account and resource group names
+$AutomationAccounts = Get-AzAutomationAccount
+foreach ($item in $AutomationAccounts) {
+    # Loop through each Automation account to find this job
+    $Job = Get-AzAutomationJob -ResourceGroupName $item.ResourceGroupName -AutomationAccountName $item.AutomationAccountName -Id $CurrentJobId -ErrorAction SilentlyContinue
+    if ($Job) {
+        $AutomationAccountName = $item.AutomationAccountName
+        $ResourceGroupName = $item.ResourceGroupName
+        $RunbookName = $Job.RunbookName
+        break
+    }
+}
+Write-Output "Automation Account Name: '$AutomationAccountName'"
+Write-Output "Resource Group Name: '$ResourceGroupName'"
+Write-Output "Runbook Name: '$RunbookName'"
+
+#Check if the runbook is already running
+if ($RunbookName) {
+    $CurrentRunningJobs = Get-AzAutomationJob -ResourceGroupName $ResourceGroupName -AutomationAccountName $AutomationAccountName -RunbookName $RunbookName | Where-object {($_.Status -imatch '\w+ing$' -or $_.Status -imatch 'queued') -and $_.JobId.tostring() -ine $CurrentJobId}
+    If ($CurrentRunningJobs) {
+        Write-output "Active runbook job detected."
+        Foreach ($job in $CurrentRunningJobs) {
+            Write-Output " - JobId: $($job.JobId), Status: '$($job.Status)'."
+        }
+        Write-output "The runbook job will stop now."
+        Exit
+    } else {
+        Write-Output "No concurrent runbook jobs found. OK to continue."
+    }
+}
+else {
+    Write-output "Runbook not found will stop now."
+    Exit
+}
+# End check
+
+##################################################################### Start Function #####################################################################
 Function Get-AutoPilotDevice(){
     [cmdletbinding()]
     param
@@ -207,6 +251,7 @@ Function Add-AutoPilotImportedDevice(){
     "@odata.type": "#microsoft.graph.importedWindowsAutopilotDeviceIdentity",
     "orderIdentifier": "$orderIdentifier",
     "serialNumber": "$serialNumber",
+    "groupTag": "$groupTag",
     "productKey": "",
     "hardwareIdentifier": "$hardwareIdentifier",
     "grouptag": "$groupTag",
@@ -224,7 +269,8 @@ Function Add-AutoPilotImportedDevice(){
             Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post -Body $json -ContentType "application/json"
         }
         catch {
-    
+            
+            # If already exists Invoke-RestMethod update for example group tag
             $ex = $_.Exception
             $errorResponse = $ex.Response.GetResponseStream()
             $reader = New-Object System.IO.StreamReader($errorResponse)
@@ -397,46 +443,15 @@ param
 }
 
 $global:totalCount = 0
+# End Function
 
-$CurrentJobId= $PSPrivateMetadata.JobId.Guid
-Write-Output "Current Job ID: '$CurrentJobId'"
+# Requirements
+# Remove CSV and add again on sharePoint when changing because of logic app trigger, otherwise no change will be noticed + also better for audit purposes.
+# No own folder, only specific set of people are allowed to upload, when file not removed from storage account, faulty CSV
+# Check on uploaded CSV the tag and if it's defined properly.
 
-#Get Automation account and resource group names
-$AutomationAccounts = Get-AzAutomationAccount
-foreach ($item in $AutomationAccounts) {
-    # Loop through each Automation account to find this job
-    $Job = Get-AzAutomationJob -ResourceGroupName $item.ResourceGroupName -AutomationAccountName $item.AutomationAccountName -Id $CurrentJobId -ErrorAction SilentlyContinue
-    if ($Job) {
-        $AutomationAccountName = $item.AutomationAccountName
-        $ResourceGroupName = $item.ResourceGroupName
-        $RunbookName = $Job.RunbookName
-        break
-    }
-}
-Write-Output "Automation Account Name: '$AutomationAccountName'"
-Write-Output "Resource Group Name: '$ResourceGroupName'"
-Write-Output "Runbook Name: '$RunbookName'"
+##################################################################### Start main logic #####################################################################
 
-#Check if the runbook is already running
-if ($RunbookName) {
-    $CurrentRunningJobs = Get-AzAutomationJob -ResourceGroupName $ResourceGroupName -AutomationAccountName $AutomationAccountName -RunbookName $RunbookName | Where-object {($_.Status -imatch '\w+ing$' -or $_.Status -imatch 'queued') -and $_.JobId.tostring() -ine $CurrentJobId}
-    If ($CurrentRunningJobs) {
-        Write-output "Active runbook job detected."
-        Foreach ($job in $CurrentRunningJobs) {
-            Write-Output " - JobId: $($job.JobId), Status: '$($job.Status)'."
-        }
-        Write-output "The runbook job will stop now."
-        Exit
-    } else {
-        Write-Output "No concurrent runbook jobs found. OK to continue."
-    }
-}
-else {
-    Write-output "Runbook not found will stop now."
-    Exit
-}
-
-# Main logic
 $PathCsvFiles = "$env:TEMP"
 $CombinedOutput = "$pathCsvFiles\combined.csv"
 
@@ -448,11 +463,11 @@ if ($countOnline -gt 0) {
     $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
 
     # parse all .csv files and combine to single one for batch upload!
-    Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash" -Encoding Unicode
+    Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag,Action" -Encoding Unicode
     $downloadFiles | ForEach-Object { Get-Content $_.FullName | Select-Object -Index 1 } | Add-Content -Path $CombinedOutput -Encoding Unicode
 }
 
-if (Test-Path $CombinedOutput) {
+if (Test-Path $CombinedOutput ) { # And action is import
     # measure import timespan
     $importStartTime = Get-Date
 
@@ -470,7 +485,7 @@ if (Test-Path $CombinedOutput) {
     $downloadFilesSearchableBySerialNumber = @{}
 
     ForEach ($downloadFile in $downloadFiles) {
-        $serialNumber = $(Get-Content $downloadFile.FullName | Select -Index 1 ).Split(',')[0]
+        $serialNumber = $(Get-Content $downloadFile.FullName | Select-Object -Index 1 ).Split(',')[0]
 
         $downloadFilesSearchableBySerialNumber.Add($serialNumber, $downloadFile.Name)
         $downloadFilesSearchableByName.Add($downloadFile.Name, $serialNumber)
@@ -508,5 +523,6 @@ else {
     Write-Output ""
     Write-Output "Nothing to import."
 }
+# End main logic
 
 Write-Output "Finish"
