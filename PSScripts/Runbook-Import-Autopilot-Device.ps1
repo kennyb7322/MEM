@@ -184,7 +184,7 @@ Function Get-AutoPilotDevice(){
             break
         }
     
-    }
+}
     
 Function Get-AutoPilotImportedDevice(){
 [cmdletbinding()]
@@ -229,6 +229,96 @@ param
         Exit
     }
 
+}
+
+Function Get-AutoPilotDeviceIdentities(){
+    [cmdletbinding()]
+    param
+    (
+        [Parameter(Mandatory=$false)] $id
+    )
+    
+        # Defining Variables
+        $graphApiVersion = "beta"
+        $Resource = "deviceManagement/windowsAutopilotDeviceIdentities"
+    
+        if ($id) {
+            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
+        }
+        else {
+            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
+        }
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get
+            if ($id) {
+                $response
+            }
+            else {
+                $response.Value
+            }
+        }
+        catch {
+    
+            $ex = $_.Exception
+            $errorResponse = $ex.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponse)
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $responseBody = $reader.ReadToEnd();
+    
+            Write-Output "Response content:`n$responseBody"
+            Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+    
+            #break
+            # in case we cannot verify we exit the script to prevent cleanups and loosing of .csv files in the blob storage
+            Exit
+        }
+    
+}
+
+Function Remove-AutoPilotDeviceIdentities(){
+    [cmdletbinding()]
+    param
+    (
+        [Parameter(Mandatory=$true)] $id
+    )
+    
+        # Defining Variables
+        $graphApiVersion = "beta"
+        $Resource = "deviceManagement/windowsAutopilotDeviceIdentities"
+    
+        if ($id) {
+            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
+        }
+        else {
+            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
+        }
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Delete | Out-Null
+            if ($id) {
+                $response
+            }
+            else {
+                $response.Value
+            }
+        }
+        catch {
+    
+            $ex = $_.Exception
+            $errorResponse = $ex.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponse)
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $responseBody = $reader.ReadToEnd();
+    
+            Write-Output "Response content:`n$responseBody"
+            Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+    
+            #break
+            # in case we cannot verify we exit the script to prevent cleanups and loosing of .csv files in the blob storage
+            Exit
+        }
+    
 }
 
 Function Add-AutoPilotImportedDevice(){
@@ -284,7 +374,7 @@ Function Add-AutoPilotImportedDevice(){
             break
         }
     
-    }
+}
 
 Function Remove-AutoPilotImportedDevice(){
     [cmdletbinding()]
@@ -342,7 +432,8 @@ Function Import-AutoPilotCSV(){
         $devices = Import-CSV $csvFile
 
         $GroupTagOutput = @()
-        $global:errorList = @{}
+        $ImportedDevicesOutput = @()
+        $global:errorList = @{}    
 
         foreach ($device in $devices){
             # Check if Group Tag is set correctly
@@ -351,10 +442,11 @@ Function Import-AutoPilotCSV(){
             $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
             $c = $i.Split("-")[-2] # NL
             $e = $i.Split("-")[-1] # 00
+
+            $ImportedDevicesOutput += $device.'Device Serial Number'
             }
 
             Catch {
-
             $ErrorCode = if(!$device.'Group Tag'){"No Grouptag"}
             $ErrorCode = if($device.'Group Tag'){"Bad Grouptag"}
 
@@ -535,6 +627,35 @@ if (Test-Path $CombinedOutput ) { # And action is import
     # Sync new devices to Intune
     Write-output "Triggering Sync to Intune."
     Invoke-AutopilotSync
+
+    # Devices are imported if group tag is OK, check for model and hardware hash only possible after import
+    # Check if parameters are correct
+    $modelList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude') # Check modellist
+
+    # Get info like model, hardware hash
+    $AutoPilotDeviceIdentities = @()
+    $AutoPilotDeviceIdentities = Get-AutoPilotDeviceIdentities
+
+    # Get only info from devices that are imported successfully
+    Foreach ($AutoPilotDevice in $AutoPilotDeviceIdentities | Where-Object {$_.serialNumber -in $ImportedDevicesOutput}){
+
+        if (($AutoPilotDevice.model -in $modelList) -and ($autopilotdevice.serialNumber -in $ImportedDevicesOutput)){
+            Write-Output "Model and Hardware hash checked for $autopilotdevice.serialNumber"
+        }
+        Else {
+            $ErrorModel = if($AutoPilotDevice.model -notin $modelList){"Model mismatch"}
+            $ErrorHash = if($AutoPilotDevice.serialNumber -notin $ImportedDevicesOutput){"Hash mismatch"}
+
+            $ErrorCode = $ErrorModel + $ErrorHash
+
+            Write-Warning -Message "$ErrorCode for $($autopilotdevice.serialNumber)"    
+            
+            #Remove autopilot device
+            Remove-AutoPilotDeviceIdentities -id $AutoPilotDevice.id  
+
+            $global:errorList.Add($autopilotdevice.serialNumber, $AutoPilotDevice.model)
+        }    
+    }
 }
 else {
     Write-Output ""
