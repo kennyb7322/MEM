@@ -332,28 +332,42 @@ Function Import-AutoPilotCSV(){
             Write-Output "Previous cleanup didn't work, stopping any further actions to prevent filling up Autopilot imported device space!"
             Exit
         }
+ 
+        # Entries that needs to be checked
+        $labelList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
+        $countryList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
+        $entityList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
 
         # Read CSV and process each device
         $devices = Import-CSV $csvFile
 
-        foreach ($device in $devices) {
+        $GroupTagOutput = @()
+        $global:errorList = @{}
 
-        # Check if Group Tag is set correctly
-        $i = $device.'Group Tag'
-        $d = $i.substring(0,11) # A-CDS-O-P-L
-        $c = $i.Split("-")[-2] # NL
-        $e = $i.Split("-")[-1] # 00
-
-            if (($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){
-                Add-AutoPilotImportedDevice `
-                    -serialNumber $device.'Device Serial Number' `
-                    -hardwareIdentifier $device.'Hardware Hash' `
-                    -orderIdentifier $orderIdentifier `
-                    -groupTag $device.'Group Tag'
+        foreach ($device in $devices){
+            # Check if Group Tag is set correctly
+            Try {
+            $i = $device.'Group Tag'
+            $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
+            $c = $i.Split("-")[-2] # NL
+            $e = $i.Split("-")[-1] # 00
             }
 
-            else {
-            Write-Output "Group Tag not set correctly for $($device.'Device Serial Number')"
+            Catch {
+
+            $ErrorCode = if(!$device.'Group Tag'){"No Grouptag"}
+            $ErrorCode = if($device.'Group Tag'){"Bad Grouptag"}
+
+            $GroupTagOutput += $device.'Device Serial Number'
+
+            # Add wrong group tag devices to list below
+            $global:errorList.Add($device.'Device Serial Number', $device.'Group Tag')
+
+            Write-Warning -Message "$ErrorCode for $($deviceStatus.serialNumber)"            
+            }
+
+            if (($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){
+                Add-AutoPilotImportedDevice -serialNumber $device.'Device Serial Number' -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
             }
         }
 
@@ -380,29 +394,32 @@ Function Import-AutoPilotCSV(){
             }
         }
 
-        # Generate some statistics for reporting...
+        # Generate some statistics for reporting and check entries...
         $global:totalCount = $deviceStatuses.Count
         $global:successCount = 0
         $global:errorCount = 0
         $global:softErrorCount = 0
-        $global:errorList = @{}
 
         ForEach ($deviceStatus in $deviceStatuses) {
-            if ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'success' -or $($deviceStatus.state.deviceImportStatus).ToLower() -eq 'complete') {
-                $global:successCount += 1
-            } elseif ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'error') {
-                $global:errorCount += 1
-                # ZtdDeviceAlreadyAssigned will be counted as soft error, free to delete
-                if ($($deviceStatus.state.deviceErrorCode) -eq 806) {
-                    $global:softErrorCount += 1
+
+        if (($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'success' -or $($deviceStatus.state.deviceImportStatus).ToLower() -eq 'complete'))  {
+            $global:successCount += 1
+        } elseif ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'error') {
+            $global:errorCount += 1
+            # ZtdDeviceAlreadyAssigned will be counted as soft error, free to delete
+            if ($($deviceStatus.state.deviceErrorCode) -eq 806) {
+                $global:softErrorCount += 1
                 }
-                $global:errorList.Add($deviceStatus.serialNumber, $deviceStatus.state)
+            $global:errorList.Add($deviceStatus.serialNumber, $deviceStatus.state)
             }
         }
+        
+        # Add bad group tags to global error count
+        $global:errorCount = $global:errorCount + $GroupTagOutput.Count
 
         # Display the statuses
         $deviceStatuses | ForEach-Object {
-            Write-Output "Serial number $($_.serialNumber): $($_.state.deviceImportStatus), $($_.state.deviceErrorCode), $($_.state.deviceErrorName)"
+            Write-Output "Serial number $($_.serialNumber): $($_.groupTag), $($_.state.deviceImportStatus), $($_.state.deviceErrorCode), $($_.state.deviceErrorName)"
         }
 
         # Cleanup the imported device records
