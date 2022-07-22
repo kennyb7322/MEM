@@ -12,26 +12,37 @@ Get HardwareID's from Blob storage and import in MEM.
 .DESCRIPTION
 Get AutoPilot device information from Azure Blob Storage and import device in MEM.
 AutoPilot service via Intune API running from a Azure Automation runbook and Cleanup Blob Storage.
+It will do checks for Hardware model, Hardware hash and Grouptag.
 .NOTES
   Version:        1.0
   Author:         Ivo Uenk
-  Creation Date:  2022-07-09
+  Creation Date:  2022-07-22
   Purpose/Change: Initial script development
 #>
 
-##################################################################### Start Connection #####################################################################
+##################################################################### Variables #####################################################################
 
-$intuneAutomationCredential = Get-AutomationPSCredential -Name 'AutomationCreds'
+$intuneAutomationCredential = Get-AutomationPSCredential -Name "AutomationCreds"
 $userName = $intuneAutomationCredential.UserName  
 $securePassword = $intuneAutomationCredential.Password
 $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword 
-$intuneAutomationAppId = Get-AutomationVariable -Name Microsoft Intune PowerShell
-$tenant = Get-AutomationVariable -Name TenantId
 
 # Get connection info for storage account
 $StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
 $ContainerName = Get-AutomationVariable -Name 'ContainerName'
 $StorageKey = Get-AutomationVariable -Name 'StorageKey'
+
+# Connect to Microsoft services
+Connect-AzAccount -Credential $psCredential
+
+# Get connection info for storage account
+$PathCsvFiles = "$env:TEMP"
+$CombinedOutput = "$pathCsvFiles\combined.csv"
+$LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + (Get-Date -UFormat "%d-%m-%Y") + ".log"
+
+$accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
+
+# End variables
 
 function Get-AuthToken {
 
@@ -42,9 +53,9 @@ function Get-AuthToken {
         throw 'AzureAD PowerShell module is not installed!'
     }
 
-    $intuneAutomationCredential = Get-AutomationPSCredential -Name automation
-    $intuneAutomationAppId = Get-AutomationVariable -Name IntuneClientId
-    $tenant = Get-AutomationVariable -Name Tenant
+    $intuneAutomationCredential = Get-AutomationPSCredential -Name "AutomationCreds"
+    $intuneAutomationAppId = Get-AutomationVariable -Name 'MicrosoftIntunePowershell'
+    $tenant = Get-AutomationVariable -Name 'TenantId'
 
     $adal = Join-Path $AadModule.ModuleBase "Microsoft.IdentityModel.Clients.ActiveDirectory.dll"
     $adalforms = Join-Path $AadModule.ModuleBase "Microsoft.IdentityModel.Clients.ActiveDirectory.Platform.dll"
@@ -99,50 +110,11 @@ Connect-AzAccount -Credential $psCredential
 
 # Get connection info for storage account
 $accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
-# End Connection
 
-##################################################################### Check if job is already in progress #####################################################################
+# End Connections
 
-$CurrentJobId= $PSPrivateMetadata.JobId.Guid
-Write-Output "Current Job ID: '$CurrentJobId'"
+##################################################################### Functions #####################################################################
 
-#Get Automation account and resource group names
-$AutomationAccounts = Get-AzAutomationAccount
-foreach ($item in $AutomationAccounts) {
-    # Loop through each Automation account to find this job
-    $Job = Get-AzAutomationJob -ResourceGroupName $item.ResourceGroupName -AutomationAccountName $item.AutomationAccountName -Id $CurrentJobId -ErrorAction SilentlyContinue
-    if ($Job) {
-        $AutomationAccountName = $item.AutomationAccountName
-        $ResourceGroupName = $item.ResourceGroupName
-        $RunbookName = $Job.RunbookName
-        break
-    }
-}
-Write-Output "Automation Account Name: '$AutomationAccountName'"
-Write-Output "Resource Group Name: '$ResourceGroupName'"
-Write-Output "Runbook Name: '$RunbookName'"
-
-#Check if the runbook is already running
-if ($RunbookName) {
-    $CurrentRunningJobs = Get-AzAutomationJob -ResourceGroupName $ResourceGroupName -AutomationAccountName $AutomationAccountName -RunbookName $RunbookName | Where-object {($_.Status -imatch '\w+ing$' -or $_.Status -imatch 'queued') -and $_.JobId.tostring() -ine $CurrentJobId}
-    If ($CurrentRunningJobs) {
-        Write-output "Active runbook job detected."
-        Foreach ($job in $CurrentRunningJobs) {
-            Write-Output " - JobId: $($job.JobId), Status: '$($job.Status)'."
-        }
-        Write-output "The runbook job will stop now."
-        Exit
-    } else {
-        Write-Output "No concurrent runbook jobs found. OK to continue."
-    }
-}
-else {
-    Write-output "Runbook not found will stop now."
-    Exit
-}
-# End check
-
-##################################################################### Start Function #####################################################################
 Function Get-AutoPilotDevice(){
     [cmdletbinding()]
     param
@@ -161,7 +133,7 @@ Function Get-AutoPilotDevice(){
             $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
         }
         try {
-            $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get
+            $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get
             if ($id) {
                 $response
             }
@@ -204,7 +176,7 @@ param
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     }
     try {
-        $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get
+        $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get
         if ($id) {
             $response
         }
@@ -287,20 +259,11 @@ Function Remove-AutoPilotDeviceIdentities(){
         $graphApiVersion = "beta"
         $Resource = "deviceManagement/windowsAutopilotDeviceIdentities"
     
-        if ($id) {
-            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
-        }
-        else {
-            $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
-        }
+        $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
+
         try {
             $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Delete | Out-Null
-            if ($id) {
-                $response
-            }
-            else {
-                $response.Value
-            }
+
         }
         catch {
     
@@ -314,9 +277,47 @@ Function Remove-AutoPilotDeviceIdentities(){
             Write-Output "Response content:`n$responseBody"
             Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
     
-            #break
-            # in case we cannot verify we exit the script to prevent cleanups and loosing of .csv files in the blob storage
-            Exit
+            break
+        }
+    
+}
+
+Function Update-GroupTags(){
+    [cmdletbinding()]
+    param
+    (
+        [Parameter(Mandatory=$true)] $id,
+        [Parameter(Mandatory=$true)] $groupTag
+    )
+    
+        # Defining Variables
+        $graphApiVersion = "beta"
+        $Resource = "deviceManagement/windowsAutopilotDeviceIdentities"
+
+        $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id/UpdateDeviceProperties"
+        $json = @"
+{
+  "groupTag": "$groupTag"
+}
+"@
+
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Post -Body $json -ContentType "application/json"
+
+        }
+        catch {
+    
+            $ex = $_.Exception
+            $errorResponse = $ex.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponse)
+            $reader.BaseStream.Position = 0
+            $reader.DiscardBufferedData()
+            $responseBody = $reader.ReadToEnd();
+    
+            Write-Output "Response content:`n$responseBody"
+            Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+    
+            break
         }
     
 }
@@ -344,7 +345,6 @@ Function Add-AutoPilotImportedDevice(){
     "groupTag": "$groupTag",
     "productKey": "",
     "hardwareIdentifier": "$hardwareIdentifier",
-    "grouptag": "$groupTag",
     "state": {
         "@odata.type": "microsoft.graph.importedWindowsAutopilotDeviceIdentityState",
         "deviceImportStatus": "pending",
@@ -356,7 +356,7 @@ Function Add-AutoPilotImportedDevice(){
 "@
 
         try {
-            Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post -Body $json -ContentType "application/json"
+            Invoke-RestMethod -Uri $uri -Headers $authToken -Method Post -Body $json -ContentType "application/json"
         }
         catch {
             
@@ -389,7 +389,7 @@ Function Remove-AutoPilotImportedDevice(){
         $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource/$id"
 
         try {
-            Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Delete | Out-Null
+            Invoke-RestMethod -Uri $uri -Headers $authToken -Method Delete | Out-Null
         }
         catch {
     
@@ -408,11 +408,12 @@ Function Remove-AutoPilotImportedDevice(){
         
 }
 
-Function Import-AutoPilotCSV(){
+Function Import-AutoPilot(){
     [cmdletbinding()]
     param
     (
         [Parameter(Mandatory=$true)] $csvFile,
+        [Parameter(Mandatory=$true)] $LogFile,
         [Parameter(Mandatory=$false)] $orderIdentifier = ""
     )
 
@@ -423,44 +424,14 @@ Function Import-AutoPilotCSV(){
             Exit
         }
  
-        # Entries that needs to be checked
-        $labelList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
-        $countryList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
-        $entityList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
-
         # Read CSV and process each device
+        $global:AutopilotImportList = @{}
         $devices = Import-CSV $csvFile
 
-        $GroupTagOutput = @()
-        $ImportedDevicesOutput = @()
-        $global:errorList = @{}    
-
-        foreach ($device in $devices){
-            # Check if Group Tag is set correctly
-            Try {
-            $i = $device.'Group Tag'
-            $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
-            $c = $i.Split("-")[-2] # NL
-            $e = $i.Split("-")[-1] # 00
-
-            $ImportedDevicesOutput += $device.'Device Serial Number'
-            }
-
-            Catch {
-            $ErrorCode = if(!$device.'Group Tag'){"No Grouptag"}
-            $ErrorCode = if($device.'Group Tag'){"Bad Grouptag"}
-
-            $GroupTagOutput += $device.'Device Serial Number'
-
-            # Add wrong group tag devices to list below
-            $global:errorList.Add($device.'Device Serial Number', $device.'Group Tag')
-
-            Write-Warning -Message "$ErrorCode for $($deviceStatus.serialNumber)"            
-            }
-
-            if (($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){
-                Add-AutoPilotImportedDevice -serialNumber $device.'Device Serial Number' -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
-            }
+        foreach ($device in $devices) {
+            Add-AutoPilotImportedDevice -serialNumber $device.'Device Serial Number' -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
+			$global:AutopilotImportList.Add($device.'Device Serial Number', $device.'Group Tag')
+            Write-Log -LogOutput ("Importing Autopilot device: $device") -Path $LogFile
         }
 
         # While we could keep a list of all the IDs that we added and then check each one, it is 
@@ -486,28 +457,35 @@ Function Import-AutoPilotCSV(){
             }
         }
 
-        # Generate some statistics for reporting and check entries...
+        # Generate some statistics for reporting
         $global:totalCount = $deviceStatuses.Count
         $global:successCount = 0
         $global:errorCount = 0
         $global:softErrorCount = 0
+        $global:errorList = @{}
+        $global:softErrorList = @{}
 
         ForEach ($deviceStatus in $deviceStatuses) {
+        $Device = $deviceStatus.serialNumber
 
         if (($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'success' -or $($deviceStatus.state.deviceImportStatus).ToLower() -eq 'complete'))  {
             $global:successCount += 1
+            Write-Log -LogOutput ("Import completed for device: $Device") -Path $LogFile
+
         } elseif ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'error') {
             $global:errorCount += 1
             # ZtdDeviceAlreadyAssigned will be counted as soft error, free to delete
+            Write-Log -LogOutput ("Import failed for device $Device") -Path $LogFile
+
             if ($($deviceStatus.state.deviceErrorCode) -eq 806) {
                 $global:softErrorCount += 1
+                $global:softErrorList.Add($deviceStatus.serialNumber, $devicestatus.groupTag)
+                Write-Log -LogOutput ("Device already exist: $Device") -Path $LogFile
                 }
-            $global:errorList.Add($deviceStatus.serialNumber, $deviceStatus.state)
+
+            $global:errorList.Add($deviceStatus.serialNumber, $devicestatus.state)
             }
         }
-        
-        # Add bad group tags to global error count
-        $global:errorCount = $global:errorCount + $GroupTagOutput.Count
 
         # Display the statuses
         $deviceStatuses | ForEach-Object {
@@ -518,6 +496,12 @@ Function Import-AutoPilotCSV(){
         $deviceStatuses | ForEach-Object {
             Remove-AutoPilotImportedDevice -id $_.id
         }
+
+		# Sync new devices to Intune
+		Write-output "Triggering Sync to Intune."
+        Write-Log -LogOutput ("Triggering sync to Intune after imports") -Path $LogFile
+		Invoke-AutopilotSync
+
 }
 
 Function Invoke-AutopilotSync(){
@@ -531,7 +515,7 @@ param
 
     $uri = "https://graph.microsoft.com/$graphApiVersion/$Resource"
     try {
-        $response = Invoke-RestMethod -Uri $uri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Post
+        $response = Invoke-RestMethod -Uri $uri -Headers $authToken -Method Post
         $response.Value
     }
     catch {
@@ -551,18 +535,27 @@ param
 
 }
 
+Function Write-Log{
+	param (
+        [Parameter(Mandatory=$True)]
+        [array]$LogOutput,
+        [Parameter(Mandatory=$True)]
+        [string]$Path
+	)
+	$currentDate = (Get-Date -UFormat "%d-%m-%Y")
+	$currentTime = (Get-Date -UFormat "%T")
+	$logOutput = $logOutput -join (" ")
+	"[$currentDate $currentTime] $logOutput" | Out-File $Path -Append
+}
+
+# End Functions
+
 $global:totalCount = 0
-# End Function
 
-# Requirements
-# Remove CSV and add again on sharePoint when changing because of logic app trigger, otherwise no change will be noticed + also better for audit purposes.
-# No own folder, only specific set of people are allowed to upload, when file not removed from storage account, faulty CSV
-# Check on uploaded CSV the tag and if it's defined properly.
+# Connect to Intune
+Connect-AutoPilotIntune
 
-##################################################################### Start main logic #####################################################################
-
-$PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
+##################################################################### Importing devices #####################################################################
 
 $countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Measure-Object).Count
 if ($countOnline -gt 0) {
@@ -574,6 +567,7 @@ if ($countOnline -gt 0) {
     # parse all .csv files and combine to single one for batch upload!
     Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag,Action" -Encoding Unicode
     $downloadFiles | ForEach-Object { Get-Content $_.FullName | Select-Object -Index 1 } | Add-Content -Path $CombinedOutput -Encoding Unicode
+    Write-Log -LogOutput ("Parse all .csv files and combine to single one for batch upload!") -Path $LogFile
 }
 
 if (Test-Path $CombinedOutput ) { # And action is import
@@ -581,86 +575,215 @@ if (Test-Path $CombinedOutput ) { # And action is import
     $importStartTime = Get-Date
 
     # Add a batch of AutoPilot devices
-    Import-AutoPilotCSV $CombinedOutput
+    Write-Log -LogOutput ("Entries found start importing devices...") -Path $LogFile
+    Import-AutoPilot $CombinedOutput -LogFile $LogFile
 
     # calculate import timespan
     $importEndTime = Get-Date
     $importTotalTime = $importEndTime - $importStartTime
     $importTotalTime = "$($importTotalTime.Hours):$($importTotalTime.Minutes):$($importTotalTime.Seconds)s"
 
-    # Online blob storage cleanup, leave error device .csv files there expect it's ZtdDeviceAlreadyAssigned error
-    # in case of error someone needs to check manually
-    $downloadFilesSearchableByName = @{}
-    $downloadFilesSearchableBySerialNumber = @{}
-
-    ForEach ($downloadFile in $downloadFiles) {
-        $serialNumber = $(Get-Content $downloadFile.FullName | Select-Object -Index 1 ).Split(',')[0]
-
-        $downloadFilesSearchableBySerialNumber.Add($serialNumber, $downloadFile.Name)
-        $downloadFilesSearchableByName.Add($downloadFile.Name, $serialNumber)
-    }
-    $serialNumber = $null
-
-    $csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob 
-    ForEach ($csvBlob in $csvBlobs) {
-        $serialNumber = $downloadFilesSearchableByName[$csvBlob.Name]
-
-        $isErrorDevice = $false
-        $isSafeToDelete = $false
-
-        if ($serialNumber) {
-            ForEach ($number in $global:errorList.Keys){
-                if ($number -eq $serialNumber) {
-                    $isErrorDevice = $true
-                    if ($global:errorList[$number].deviceErrorCode -eq 806) {
-                        $isSafeToDelete = $true
-                    }
-                }
-            }
-            
-            if (-not $isErrorDevice -or $isSafeToDelete) {
-                Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name-Context $accountContext
-            }
-        }
-    }
-
-    # Sync new devices to Intune
-    Write-output "Triggering Sync to Intune."
-    Invoke-AutopilotSync
-
-    # Devices are imported if group tag is OK, check for model and hardware hash only possible after import
-    # Check if parameters are correct
-    $modelList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude') # Check modellist
-
-    # Get info like model, hardware hash
-    $AutoPilotDeviceIdentities = @()
-    $AutoPilotDeviceIdentities = Get-AutoPilotDeviceIdentities
-
-    # Get only info from devices that are imported successfully
-    Foreach ($AutoPilotDevice in $AutoPilotDeviceIdentities | Where-Object {$_.serialNumber -in $ImportedDevicesOutput}){
-
-        if (($AutoPilotDevice.model -in $modelList) -and ($autopilotdevice.serialNumber -in $ImportedDevicesOutput)){
-            Write-Output "Model and Hardware hash checked for $autopilotdevice.serialNumber"
-        }
-        Else {
-            $ErrorModel = if($AutoPilotDevice.model -notin $modelList){"Model mismatch"}
-            $ErrorHash = if($AutoPilotDevice.serialNumber -notin $ImportedDevicesOutput){"Hash mismatch"}
-
-            $ErrorCode = $ErrorModel + $ErrorHash
-
-            Write-Warning -Message "$ErrorCode for $($autopilotdevice.serialNumber)"    
-            
-            #Remove autopilot device
-            Remove-AutoPilotDeviceIdentities -id $AutoPilotDevice.id  
-
-            $global:errorList.Add($autopilotdevice.serialNumber, $AutoPilotDevice.model)
-        }    
-    }
 }
 else {
     Write-Output ""
     Write-Output "Nothing to import."
+    Write-Log -LogOutput ("Nothing to import") -Path $LogFile
 }
-# End main logic
 
-Write-Output "Finish"
+Write-Output "Finished importing Autopilot devices"
+Write-Log -LogOutput ("Finished importing Autopilot devices") -Path $LogFile
+
+# End Importing devices
+
+##################################################################### Update grouptag #####################################################################
+
+# Wait 5 minutes to give intune time to process previous steps
+Start-sleep -Seconds 300
+
+# Check if parameters are correct
+$modelList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude') # Check modellist
+$labelList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
+$countryList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
+$entityList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
+
+# Get info like Model, Hash and Group tag
+$AutopilotImportErrors = @()
+$AutoPilotDeviceIdentities = @()
+$AutoPilotDeviceIdentities = Get-AutoPilotDeviceIdentities 
+
+# If devices got ZtdDeviceAlreadyAssigned error try to update group tag
+
+Foreach ($AutoPilotDevice in $AutoPilotDeviceIdentities | Where-Object {$_.serialNumber -in $global:softErrorList.Keys})
+{
+    $DeviceTag = $AutoPilotDevice.serialNumber
+
+    Try {
+        $i = $global:softErrorList.$DeviceTag
+        $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
+        $c = $i.Split("-")[-2] # NL
+        $e = $i.Split("-")[-1] # 00
+
+        if (($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){      
+            Update-GroupTags -id $autopilotdevice.id -groupTag $i        
+            Write-Log -LogOutput ("Update grouptag $i for device: $DeviceTag") -Path $LogFile
+
+		    Invoke-AutopilotSync
+            Write-Log -LogOutput ("Triggering Sync to Intune after updating grouptags") -Path $LogFile
+        }
+
+        Else {
+            $ErrorTag = "Bad Grouptag"
+
+            $obj = new-object psobject -Property @{
+            SerialNumber = $AutoPilotDevice.serialNumber
+            Error = $ErrorCode
+            }
+
+            $AutopilotImportErrors += $obj
+            Write-Log -LogOutput ("else Failed updating $ErrorCode for device: $DeviceTag") -Path $LogFile
+        }     
+    }
+
+    Catch {
+        $ErrorCode = if(!$device.'Group Tag'){"No Grouptag"}
+        $ErrorCode = if($device.'Group Tag'){"Bad Grouptag"}
+
+        $obj = new-object psobject -Property @{
+        SerialNumber = $AutoPilotDevice.serialNumber
+        Error = $ErrorCode
+        }
+
+        $AutopilotImportErrors += $obj
+        Write-Log -LogOutput ("catch Failed updating $ErrorCode for device: $DeviceTag") -Path $LogFile
+    }
+}
+
+Write-Output "Finished updating grouptags"
+Write-Log -LogOutput ("Finished updating grouptags") -Path $LogFile
+
+# End grouptags
+
+##################################################################### Checking #####################################################################
+
+# Get only info from devices that are imported in previous step
+Foreach ($AutoPilotDevice in $AutoPilotDeviceIdentities | Where-Object {$_.serialNumber -in $global:AutopilotImportList.Keys}){
+
+    $DeviceCheck = $AutoPilotDevice.serialNumber
+    
+    Try {
+        $i = $AutoPilotDevice.groupTag
+        $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
+        $c = $i.Split("-")[-2] # NL
+        $e = $i.Split("-")[-1] # 00
+
+	    if (($AutoPilotDevice.model -in $modelList) -and ($autopilotdevice.serialNumber -in $global:AutopilotImportList.Keys) -and ($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){
+            Write-Log -LogOutput ("Model, Hash and Grouptag are correct for device: $DeviceCheck") -Path $LogFile
+	    }
+	    
+        Else {
+		    $ErrorModel = if($AutoPilotDevice.model -notin $modelList){"Model mismatch"}
+		    $ErrorHash = if($AutoPilotDevice.serialNumber -notin $global:AutopilotImportList.Keys){"Hash mismatch"}
+            $ErrorTag = if(!($d -in $labelList) -and ($c -in $countryList) -and ($e -in $entityList)){"Bad Grouptag"}
+
+		    # Generate error code
+		    $ErrorCode = $ErrorModel + $ErrorHash + $ErrorTag
+            
+            $obj = new-object psobject -Property @{
+            SerialNumber = $AutoPilotDevice.serialNumber
+            Error = $ErrorCode
+            }
+            
+            $AutopilotImportErrors += $obj
+
+            Write-Warning -Message "$ErrorCode for device: $DeviceCheck"
+            Write-Warning -Message "Remove device from Autopilot: $DeviceCheck" 
+            
+            Write-Log -LogOutput ("$ErrorCode for device: $DeviceCheck") -Path $LogFile
+            Write-Log -LogOutput ("Remove device from Autopilot: $DeviceCheck") -Path $LogFile     
+
+		    Remove-AutoPilotDeviceIdentities -id $AutoPilotDevice.id 
+	    }
+    }
+
+    Catch {
+        $ErrorCode = if(!$AutoPilotDevice.groupTag){"No Grouptag"}
+        $ErrorCode = if($AutoPilotDevice.groupTag){"Bad Grouptag"}
+
+        $obj = new-object psobject -Property @{
+        SerialNumber = $AutoPilotDevice.serialNumber
+        Error = $ErrorCode
+        }
+
+        $AutopilotImportErrors += $obj
+
+        Write-Warning -Message "$ErrorCode for device: $DeviceCheck"
+        Write-Warning -Message "Remove device from Autopilot: $DeviceCheck"
+        
+        Write-Log -LogOutput ("$ErrorCode for device: $DeviceCheck") -Path $LogFile
+        Write-Log -LogOutput ("Remove device from Autopilot: $DeviceCheck") -Path $LogFile    
+          
+        Remove-AutoPilotDeviceIdentities -id $AutoPilotDevice.id
+        }
+}
+
+Write-Output "Finished checking imported devices"
+Write-Log -LogOutput ("Finished checking imported devices") -Path $LogFile
+# End Checking
+
+##################################################################### Results #####################################################################
+
+# Online blob storage cleanup
+$downloadFilesSearchableByName = @{}
+$downloadFilesSearchableBySerialNumber = @{}
+
+    ForEach ($downloadFile in $downloadFiles) {
+    $serialNumber = $(Get-Content $downloadFile.FullName | Select -Index 1 ).Split(',')[0]
+
+    $downloadFilesSearchableBySerialNumber.Add($serialNumber, $downloadFile.Name)
+    $downloadFilesSearchableByName.Add($downloadFile.Name, $serialNumber)
+}
+$serialNumber = $null
+
+$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob 
+    
+ForEach ($csvBlob in $csvBlobs) {
+
+    $ImportFile = $csvBlob.Name
+    $serialNumber = $downloadFilesSearchableByName[$csvBlob.Name]
+
+    if ($serialNumber) {
+        ForEach ($number in $global:errorList.Keys){
+            if ($number -eq $serialNumber) {
+                $obj = new-object psobject -Property @{
+                SerialNumber = $number
+                Error = "fatal error"
+                }
+
+                $AutopilotImportErrors += $obj
+            }
+        }          
+        Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name -Context $accountContext
+        Write-Log -LogOutput ("Remove $ImportFile from $ContainerName") -Path $LogFile         
+    }
+}
+
+# Export Autopilot import errors and upload to Azure Storage
+$ErrorsFilename = "Autopilot-Import" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+$ErrorsFilePath = Join-Path $PathCsvFiles -ChildPath $ErrorsFilename
+$LogFilename = "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
+
+If(!$AutopilotImportErrors){
+    Write-Log -LogOutput ("No Errors found") -Path $LogFile
+}
+
+Else {
+    $AutopilotImportErrors | Select-Object SerialNumber, Error | Export-Csv -Path $ErrorsFilePath -Delimiter ";" -NoTypeInformation
+    Set-AzStorageBlobContent -Container $ContainerName -File $ErrorsFilePath -Blob $ErrorsFilename -Context $accountContext
+    Write-Log -LogOutput ("Errors found creating log file") -Path $LogFile
+}
+
+Set-AzStorageBlobContent -Container $ContainerName -File $LogFile -Blob $LogFilename -Context $accountContext
+
+Write-Output "Finished cleaning and exporting results"
+Write-Log -LogOutput ("Finished cleaning and exporting results") -Path $LogFile   
+# End results
