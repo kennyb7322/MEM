@@ -15,7 +15,7 @@ AutoPilot service via Intune API running from a Azure Automation runbook and Cle
 .NOTES
   Version:        1.0
   Author:         Ivo Uenk
-  Creation Date:  2022-07-22
+  Creation Date:  2022-07-28
   Purpose/Change: Initial script development
 #>
 
@@ -347,10 +347,10 @@ Function Import-AutoPilotCSV(){
         # Read CSV and process each device
         $devices = Import-CSV $csvFile
 
-        foreach ($device in $devices | ?{$device.'Device Serial Number' -in $global:correctDevices}) {
-        $device = $device.'Device Serial Number'
-            Add-AutoPilotImportedDevice -serialNumber $device.'Device Serial Number' -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
-            Write-Log -LogOutput ("Importing device: $device") -Path $LogFile
+        foreach ($device in $devices | Where-Object {$device.'Device Serial Number' -in $global:correctDevices}) {
+        $Serial = $device.'Device Serial Number'
+        Add-AutoPilotImportedDevice -serialNumber $Serial -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
+        Write-Log -LogOutput ("Importing device: $Serial") -Path $LogFile
         }
 
         # While we could keep a list of all the IDs that we added and then check each one, it is 
@@ -561,7 +561,7 @@ if (Test-Path $CombinedOutput) {
 
                 $obj = new-object psobject -Property @{
                     SerialNumber = $Serial
-                    grouTag = $AutopilotImport.GroupTag
+                    groupTag = $AutopilotImport.GroupTag
                     model = $AutopilotImport.Model
                     TPMVersion = $AutopilotImport.TPMVersion
                     Error = $ErrorSerial+$ErrorModel+$ErrorGroupTag+$ErrorTMP
@@ -579,7 +579,7 @@ if (Test-Path $CombinedOutput) {
 
             $obj = new-object psobject -Property @{
                 SerialNumber = $Serial
-                grouTag = $AutopilotImport.GroupTag
+                groupTag = $AutopilotImport.GroupTag
                 model = $AutopilotImport.Model
                 TPMVersion = $AutopilotImport.TPMVersion
                 Error = $ErrorCode
@@ -600,6 +600,7 @@ else {
 # Add a batch of AutoPilot devices
 if(!$global:correctDevices){
     Write-Output "Nothing to import."
+    Write-Log -LogOutput ("Nothing to import.") -Path $LogFile
 }
 
 Else {
@@ -607,8 +608,8 @@ Else {
     Write-Log -LogOutput ("Entries found start importing devices...") -Path $LogFile
 }
 
-Write-Output "Finished importing devices"
-Write-Log -LogOutput ("Finished importing devices") -Path $LogFile
+Write-Output "Finished main logic."
+Write-Log -LogOutput ("Finished main logic.") -Path $LogFile
 # End main logic
 
 # Post logic
@@ -625,7 +626,7 @@ $downloadFilesSearchableBySerialNumber = @{}
 }
 $serialNumber = $null
 
-$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob 
+$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -like "*.csv"}
     
 ForEach ($csvBlob in $csvBlobs) {
 
@@ -634,28 +635,27 @@ ForEach ($csvBlob in $csvBlobs) {
 
     if ($serialNumber) {
         ForEach ($number in $global:errorList.Keys){
-            if (($number -eq $serialNumber) -and ($global:errorList[$number].deviceErrorCode -eq 806))  {
+            if ($number -eq $serialNumber){
+                $Errocode = "Error during import"
+                if ($global:errorList[$number].deviceErrorCode -eq 806) {
+                    $Errocode = "Device already imported"
+                    }
+                }
+                             
                 $obj = new-object psobject -Property @{
                 SerialNumber = $number
-                Error = "Device already imported"
+                Error = $ErrorCode
                 }
 
-                $badDevices += $obj
-            }
-
-            Else {
-                $obj = new-object psobject -Property @{
-                SerialNumber = $number
-                Error = "Error during import"
-                }
-
-                $badDevices += $obj    
-            }               
-        }          
-        Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name -Context $accountContext
-        Write-Log -LogOutput ("Remove $ImportFile from $ContainerName") -Path $LogFile         
-    }
+                $badImports += $obj
+        }  
+           
+     }          
+     
+     Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name -Context $accountContext
+     Write-Log -LogOutput ("Remove $ImportFile from container: $ContainerName.") -Path $LogFile         
 }
+
 
 # Export Autopilot import errors and upload to Azure Storage
 $ErrorsFilename = "Autopilot-Import-BadDevices" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
@@ -663,17 +663,18 @@ $ErrorsFilePath = Join-Path $PathCsvFiles -ChildPath $ErrorsFilename
 $LogFilename = "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
 
 If(!$badDevices){
-    Write-Log -LogOutput ("No Errors found") -Path $LogFile
+    Write-Log -LogOutput ("No bad devices found.") -Path $LogFile
 }
 
 Else {
-    $badDevices | Format-Table | Export-Csv -Path $ErrorsFilePath -Delimiter ";" -NoTypeInformation
+	$badDevices | Select-Object SerialNumber, Model, GroupTag, TPMVersion, Error  | Export-Csv -Path $ErrorsFilePath -Delimiter ";" -NoTypeInformation
     Set-AzStorageBlobContent -Container $ContainerName -File $ErrorsFilePath -Blob $ErrorsFilename -Context $accountContext
-    Write-Log -LogOutput ("Errors found creating log file") -Path $LogFile
+    Write-Log -LogOutput ("Bad devices found creating log file.") -Path $LogFile
 }
+
+Write-Output "Finished post logic."
+Write-Log -LogOutput ("Finished post logic.") -Path $LogFile
 
 Set-AzStorageBlobContent -Container $ContainerName -File $LogFile -Blob $LogFilename -Context $accountContext
 
-Write-Output "Finished cleaning and exporting results"
-Write-Log -LogOutput ("Finished cleaning and exporting results") -Path $LogFile   
 # End post logic
