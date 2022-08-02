@@ -2,8 +2,8 @@
 Connect-AzureAD
 
 $functionApp = New-AzFunctionApp -name "ucorpimportdevice" -Location "westeurope" `
--resourceGroupName "Ucorp-MEM-RG" `
--StorageAccountName "ucorpstorage" `
+-resourceGroupName "resourceGroupName FunctionApp" `
+-StorageAccountName "storageAccountName FunctionApp" `
 -OSType "Windows" `
 -Runtime "powershell" `
 -RuntimeVersion 7.0 `
