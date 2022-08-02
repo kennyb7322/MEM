@@ -474,9 +474,9 @@ $lList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
 $cList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
 $eList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
 
-$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Measure-Object).Count
+$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -notlike "*BadDevices*"} | Measure-Object).Count
 if ($countOnline -gt 0) {
-    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
+    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -notlike "*BadDevices*"} | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
 
     # Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
     $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
@@ -592,7 +592,7 @@ $downloadFilesSearchableBySerialNumber = @{}
 }
 $serialNumber = $null
 
-$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -like "*.csv"}
+$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -notlike "*BadDevices*"} | Where-Object {$_.Name -like "*.csv"}
     
 ForEach ($csvBlob in $csvBlobs) {
 
