@@ -31,18 +31,8 @@ $StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
 $ContainerName = Get-AutomationVariable -Name 'ContainerName'
 $StorageKey = Get-AutomationVariable -Name 'StorageKey'
 
-$PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
-$LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + (Get-Date -UFormat "%d-%m-%Y") + ".log"
-
 # Connect to Microsoft services
 Connect-AzAccount -Credential $psCredential
-$accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
-
-# Connect to Microsoft services
-Connect-AzAccount -Credential $psCredential
-
-# Get connection info for storage account
 $accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
 
 # End Pre logic
@@ -528,7 +518,8 @@ $global:totalCount = 0
 Connect-AutoPilotIntune
 
 $PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
+$checkedCombinedOutput = "$pathCsvFiles\checkedcombinedoutput.csv"
+$wrongCombinedOutput = "$pathCsvFiles\wrongcombinedoutput.csv"
 $OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
 $XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
 $LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
@@ -539,31 +530,82 @@ $lList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
 $cList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
 $eList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
 
-$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Measure-Object).Count
+$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -notlike "*BadDevices*"} | Measure-Object).Count
 if ($countOnline -gt 0) {
-    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
+    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -notlike "*BadDevices*"} | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
 
     # Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
     $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
 
-    # parse all .csv files and combine to single one for batch upload!
-    Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
-    $downloadFiles | ForEach-Object { Get-Content $_.FullName | Select-Object -Index 1 } | Add-Content -Path $CombinedOutput -Encoding Unicode
+    Set-Content -Path $CheckedCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
+    Set-Content -Path $wrongCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
+
+    $gclist = @()
+    $gelist = @()
+
+    Foreach ($downloadFile in $downloadFiles) {
+        
+        # Get real owner from file propIndex 10
+        $f = get-childitem ($pathCsvFiles + "\" + $downloadFile.name)
+        $o = (New-Object -ComObject Shell.Application).NameSpace((Split-Path $f))
+        $Owner = $o.GetDetailsOf($o.ParseName((Split-Path -Leaf $f)),10)
+        $Entries = Import-Csv -path $f
+
+        # Get owner GSAFO1-CMW-Intune-Device-Operator groups assignments
+        $UPN = (Get-AzureADUser -Filter "mailNickname eq '$($Owner.Split('\')[1])'").UserPrincipalName
+        $Groups = (Get-AzureADUser -ObjectId $UPN | Get-AzureADUserMembership | Where-Object {$_.DisplayName -like "GSAFO1-CMW-Intune-Device-Operator*"}).DisplayName
+
+        Foreach ($Group in $Groups){
+
+            $g = "{0}-{1}-{2}-{3}-{4}-{5}-{6}" -f $Group.Split('-')
+            $gc = $g.Split("-")[-2] # NL
+            $ge = $g.Split("-")[-1] # 00
+        
+            $gclist += $gc
+            $gelist += $ge
+        }
+
+        Foreach ($Entry in $Entries){
+
+            $ps = $entry.'Device Serial Number'
+
+            $p = $entry.'Group Tag'
+            $d = "{0}-{1}-{2}-{3}-{4}" -f $p.Split('-')
+            $tc = $p.Split("-")[-2] # NL
+            $te = $p.Split("-")[-1] # 00    
+
+            If (($tc -in $gclist) -and ($te -in $gelist)){
+                "{0},{1},{2},{3}" -f $ps,$entry.'Windows Product ID',$Entry.'Hardware Hash',$p | Add-Content -Path $CheckedCombinedOutput -Encoding Unicode
+
+                Write-Output "$UPN has permission on $p add $ps to import list"
+                Write-Log -LogOutput ("$UPN has permission on $p add $ps to import list") -Path $LogFile
+            }
+            
+            Else {
+                "{0},{1},{2},{3}" -f $ps,$entry.'Windows Product ID',$Entry.'Hardware Hash',$p | Add-Content -Path $wrongCombinedOutput -Encoding Unicode
+
+                Write-Output "$UPN no permission on $p do not import $ps"
+                Write-Log -LogOutput ("$UPN no permission on $p do not import $ps") -Path $LogFile
+
+                #Mail de owner $upn dat het niet goed is gegaan voor $checkedFile
+            }     
+        }
+    }
 }
 
 # Import combined CSV
-if (Test-Path $CombinedOutput) {
-	Get-HardwareInfo -csvFile $CombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
+if (Test-Path $checkedCombinedOutput) {
+	Get-HardwareInfo -csvFile $CheckedCombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
     Write-Log -LogOutput ("Get HardwareInfo...") -Path $LogFile
 
     foreach ($AutopilotImport in $global:AutopilotImports){
     $Serial = $AutopilotImport.SerialNumber
     # Check if Group Tag is set correctly
         Try {
-        $i = $AutopilotImport.GroupTag
-        $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
-        $c = $i.Split("-")[-2] # NL
-        $e = $i.Split("-")[-1] # 00
+        $ag = $AutopilotImport.GroupTag
+        $d = "{0}-{1}-{2}-{3}-{4}" -f $ag.Split('-')
+        $c = $ag.Split("-")[-2] # NL
+        $e = $ag.Split("-")[-1] # 00
             
             # Check conditions
             if (($d -in $lList) -and ($c -in $cList) -and ($e -in $eList) `
@@ -660,9 +702,9 @@ ForEach ($csvBlob in $csvBlobs) {
     if ($serialNumber) {
         ForEach ($number in $global:errorList.Keys){
             if ($number -eq $serialNumber){
-                $Errocode = "Error during import"
+                $Errorcode = "Error during import"
                 if ($global:errorList[$number].deviceErrorCode -eq 806) {
-                    $Errocode = "Device already imported"
+                    $Errorcode = "Device already imported"
                     }
                 }
                              
@@ -680,10 +722,12 @@ ForEach ($csvBlob in $csvBlobs) {
      Write-Log -LogOutput ("Remove $ImportFile from container: $ContainerName.") -Path $LogFile         
 }
 
-
 # Export Autopilot import errors and upload to Azure Storage
-$ErrorsFilename = "Autopilot-Import-BadDevices" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
-$ErrorsFilePath = Join-Path $PathCsvFiles -ChildPath $ErrorsFilename
+$ImportBadDevices = "Autopilot-Import-BadDevices" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+$ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+$ImportBadDevicesPath = Join-Path $PathCsvFiles -ChildPath $ImportBadDevices
+$ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
+
 $LogFilename = "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
 
 If(!$badDevices){
@@ -691,14 +735,26 @@ If(!$badDevices){
 }
 
 Else {
-	$badDevices | Select-Object SerialNumber, Model, GroupTag, TPMVersion, Error  | Export-Csv -Path $ErrorsFilePath -Delimiter ";" -NoTypeInformation
+	$badDevices | Select-Object SerialNumber, Model, GroupTag, TPMVersion, Error  | Export-Csv -Path $ImportBadDevicesPath -Delimiter ";" -NoTypeInformation
     Set-AzStorageBlobContent -Container $ContainerName -File $ErrorsFilePath -Blob $ErrorsFilename -Context $accountContext
     Write-Log -LogOutput ("Bad devices found creating log file.") -Path $LogFile
 }
 
+If(!$badImports){
+    Write-Log -LogOutput ("No import errors found.") -Path $LogFile
+}
+
+Else {
+	$badImports | Select-Object SerialNumber, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter ";" -NoTypeInformation
+    Set-AzStorageBlobContent -Container $ContainerName -File $ErrorsFilePath -Blob $ErrorsFilename -Context $accountContext
+    Write-Log -LogOutput ("Bad devices found creating log file.") -Path $LogFile
+}
+
+
 Write-Output "Finished post logic."
 Write-Log -LogOutput ("Finished post logic.") -Path $LogFile
 
+# Upload log file
 Set-AzStorageBlobContent -Container $ContainerName -File $LogFile -Blob $LogFilename -Context $accountContext
 
 # End post logic
