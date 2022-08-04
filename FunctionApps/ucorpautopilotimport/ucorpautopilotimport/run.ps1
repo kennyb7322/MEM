@@ -463,11 +463,10 @@ Function Get-HardwareInfo(){
 $global:totalCount = 0
 
 $PathCsvFiles = "$env:TEMP"
+$CombinedOutput = "$pathCsvFiles\combined.csv"
 $OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
 $XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
 $LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
-$checkedCombinedOutput = "$pathCsvFiles\checkedcombinedoutput.csv"
-$wrongCombinedOutput = "$pathCsvFiles\wrongcombinedoutput.csv"
 
 # Check if parameters are correct
 $mList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude') # Check modellist
@@ -482,65 +481,16 @@ if ($countOnline -gt 0) {
     # Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
     $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
 
-    Set-Content -Path $CheckedCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
-    Set-Content -Path $wrongCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
-
-    $gclist = @()
-    $gelist = @()
-
-    Foreach ($downloadFile in $downloadFiles) {
-        
-        # Get real owner from file propIndex 10
-        $f = get-childitem ($pathCsvFiles + "\" + $downloadFile.name)
-        $o = (New-Object -ComObject Shell.Application).NameSpace((Split-Path $f))
-        $Owner = $o.GetDetailsOf($o.ParseName((Split-Path -Leaf $f)),10)
-        $Entries = Import-Csv -path $f 
-
-        # Get owner GSAFO1-CMW-Intune-Device-Operator groups assignments
-        $UPN = (Get-AzureADUser -Filter "mailNickname eq '$($Owner.Split('\')[1])'").UserPrincipalName
-        $Groups = (Get-AzureADUser -ObjectId $UPN | Get-AzureADUserMembership | Where-Object {$_.DisplayName -like "GSAFO1-CMW-Intune-Device-Operator*"}).DisplayName
-
-        Foreach ($Group in $Groups){
-
-            $g = "{0}-{1}-{2}-{3}-{4}-{5}-{6}" -f $Group.Split('-')
-            $gc = $g.Split("-")[-2] # NL
-            $ge = $g.Split("-")[-1] # 00
-        
-            $gclist += $gc
-            $gelist += $ge
-            }
-
-        Foreach ($Entry in $Entries){
-
-            $ps = $entry.'Device Serial Number'
-
-            $p = $entry.'Group Tag'
-            $d = "{0}-{1}-{2}-{3}-{4}" -f $p.Split('-')
-            $tc = $p.Split("-")[-2] # NL
-            $te = $p.Split("-")[-1] # 00    
-
-            If (($tc -in $gclist) -and ($te -in $gelist)){
-                "{0},{1},{2},{3}" -f $ps,$entry.'Windows Product ID',$Entry.'Hardware Hash',$p | Add-Content -Path $CheckedCombinedOutput -Encoding Unicode
-
-                Write-Output "$UPN has permission on $p add $ps to import list"
-                Write-Log -LogOutput ("$UPN has permission on $p add $ps to import list") -Path $LogFile
-            }
-            
-            Else {
-                "{0},{1},{2},{3}" -f $ps,$entry.'Windows Product ID',$Entry.'Hardware Hash',$p | Add-Content -Path $wrongCombinedOutput -Encoding Unicode
-
-                Write-Output "$UPN no permission on $p do not import $ps"
-                Write-Log -LogOutput ("$UPN no permission on $p do not import $ps") -Path $LogFile
-
-                #Mail de owner $upn dat het niet goed is gegaan voor $checkedFile
-            }     
-        }
-    }
+    # parse all .csv files and combine to single one for batch upload!
+    Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
+    $downloadFiles | ForEach-Object { Get-Content $_.FullName | Select-Object -Index 1 } | Add-Content -Path $CombinedOutput -Encoding Unicode
+    Write-Verbose "Download files and combine them..."
+    Write-Log -LogOutput ("Download files and combine them...") -Path $LogFile
 }
 
 # Import combined CSV
-if (Test-Path $checkedCombinedOutput) {
-	Get-HardwareInfo -csvFile $checkedCombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
+if (Test-Path $CombinedOutput) {
+	Get-HardwareInfo -csvFile $CombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
     Write-Verbose "Get HardwareInfo..."
     Write-Log -LogOutput ("Get HardwareInfo...") -Path $LogFile
 
@@ -697,4 +647,3 @@ Write-Log -LogOutput ("Finished post logic.") -Path $LogFile
 Set-AzStorageBlobContent -Container $ContainerName -File $LogFile -Blob $LogFilename -Context $accountContext
 
 # End post logic
-
