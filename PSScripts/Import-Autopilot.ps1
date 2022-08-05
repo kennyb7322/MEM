@@ -341,14 +341,13 @@ Function Import-AutoPilotCSV(){
         # Read CSV and process each device
         $devices = Import-CSV $csvFile
 
-        foreach ($device in $devices | Where-Object {$device.'Device Serial Number' -in $global:correctDevices}) {
+        foreach ($device in $devices | Where-Object {$device.'Device Serial Number' -in $correctDevices}) {
         $Serial = $device.'Device Serial Number'
         Add-AutoPilotImportedDevice -serialNumber $Serial -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
         Write-Log -LogOutput ("Importing device: $Serial") -Path $LogFile
         }
 
-        # While we could keep a list of all the IDs that we added and then check each one, it is 
-        # easier to just loop through all of them
+        # While we could keep a list of all the IDs that we added and then check each one, it is easier to just loop through all of them
         $processingCount = 1
         while ($processingCount -gt 0)
         {
@@ -546,6 +545,7 @@ $OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
 $XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
 $LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
 
+### Start downloading files
 $su = $SiteURL.split("/",4)[-1]
 $CSVtoImport = @()
 
@@ -562,9 +562,11 @@ foreach($item in $folderItems){
 
     # download the file
     Get-PnPFile -Url $FileRelativeURL -Path $PathCsvFiles -FileName $item.Name -AsFile -Force
+    Write-Output "File $item.Name downloaded to $PathCsvFiles"
+    Write-Log -LogOutput ("File $item.Name downloaded to $PathCsvFiles") -Path $LogFile
 
     # move the file to imported items
-    $job = Move-PnPFile -SourceUrl ($importFolderName + "/" + $item.Name) -TargetUrl $importedFolderName -NoWait
+    $result = Move-PnPFile -SourceUrl ($importFolderName + "/" + $item.Name) -TargetUrl $importedFolderName -NoWait
     $jobStatus = Receive-PnPCopyMoveJobStatus -Job $result
     
     if($jobStatus.JobState == 0){
@@ -572,21 +574,16 @@ foreach($item in $folderItems){
     Write-Log -LogOutput ("File $item.Name moved to imported items") -Path $LogFile
     }
 }
-
-# Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
-# Download oa3tool.exe
-$accountContext = New-AzureStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
-Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Where-Object {$_.Name -eq "oa3tool.exe"} | Get-AzureStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
-
-Set-Content -Path $CheckedCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
-Set-Content -Path $badCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag,Owner" -Encoding Unicode
+### End downloading files
 
 $gclist = @()
 $gelist = @()
 
 ### First stage permission check
+Set-Content -Path $CheckedCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
+Set-Content -Path $badCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag,Owner" -Encoding Unicode
+
 Foreach ($CSV in $CSVtoImport) {
-       
     $pathCSV = get-childitem ($pathCsvFiles + "\" + $CSV.FileName)
     $ownerCSV = $CSV.CreatedBy
     $Entries = Import-Csv -path $pathCSV 
@@ -595,7 +592,6 @@ Foreach ($CSV in $CSVtoImport) {
     $Groups = (Get-AzureADUser -ObjectId $ownerCSV | Get-AzureADUserMembership | Where-Object {$_.DisplayName -like "GSAFO1-CMW-Intune-Device-Operator*"}).DisplayName
 
     Foreach ($Group in $Groups){
-
         $g = "{0}-{1}-{2}-{3}-{4}-{5}-{6}" -f $Group.Split('-')
         $gc = $g.Split("-")[-2] # Get country group
         $ge = $g.Split("-")[-1] # Get entity group
@@ -629,14 +625,25 @@ Foreach ($CSV in $CSVtoImport) {
     }
 }
 
+Write-Output "End first stage permission check"
+Write-Log -LogOutput ("End first stage permission check") -Path $LogFile
+### End first stage permission check
+
+### Second stage get hardware info for CheckedCombinedOutput 
 # CheckedCombinedOutput is emtpy remove it
 $emptyCheck = Import-CSV $checkedCombinedOutput
 If (!$emptyCheck) {Remove-item $checkedCombinedOutput -ErrorAction SilentlyContinue}
 
-### Second stage get hardware info for CheckedCombinedOutput 
 if (Test-Path $checkedCombinedOutput) {
+    # Download oa3tool.exe
+    $accountContext = New-AzureStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
+    Get-AzureStorageContainer -Container $ContainerName -Context $accountContext | Get-AzureStorageBlob | Where-Object {$_.Name -eq "oa3tool.exe"} | `
+    Get-AzureStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
+
 	Get-HardwareInfo -csvFile $CheckedCombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
     Write-Log -LogOutput ("Get HardwareInfo...") -Path $LogFile
+
+    $correctDevices = @()
 
     foreach ($AutopilotImport in $global:AutopilotImports){
     $Serial = $AutopilotImport.SerialNumber
@@ -652,16 +659,22 @@ if (Test-Path $checkedCombinedOutput) {
             -and ($AutopilotImport.Model -in $mList) `
             -and ($AutopilotImport.SerialNumber -eq $Serial) `
             -and ($AutopilotImport.TPMVersion -like "*2.0*")){
-            
+
+            $obj = new-object psobject -Property @{
+                SerialNumber = $Serial
+                groupTag = $AutopilotImport.GroupTag
+                model = $AutopilotImport.Model
+                TPMVersion = $AutopilotImport.TPMVersion
+                Owner = $AutopilotImport.Owner
+            }
             # Conditions are met add device
-            $correctDevices += $AutopilotImport.SerialNumber
+            $correctDevices += $obj
 
             Write-Output "Device: $Serial added to import list"
             Write-Log -LogOutput ("Device: $Serial added to import list") -Path $LogFile
             }                            
        
             Else {
-
                 $ErrorGroupTag = if(($l -in $lList) -and ($c -in $cList) -and ($e -in $eList)){"(Bad Grouptag)"}
                 $ErrorModel = if($AutopilotImport.Model -notin $mList){"(Bad Model)"}
                 $ErrorSerial = if($AutopilotImport.SerialNumber -ne $Serial){"(Bad SerialNumber)"}
@@ -672,9 +685,9 @@ if (Test-Path $checkedCombinedOutput) {
                     groupTag = $AutopilotImport.GroupTag
                     model = $AutopilotImport.Model
                     TPMVersion = $AutopilotImport.TPMVersion
+                    Owner = $AutopilotImport.Owner
                     Error = $ErrorSerial+$ErrorModel+$ErrorGroupTag+$ErrorTMP
                 }
-
                 # Conditions are not met add device
                 $global:badDevices += $obj
 
@@ -684,7 +697,6 @@ if (Test-Path $checkedCombinedOutput) {
         }
 
         Catch {
-
             $ErrorCode = if(!$AutopilotImport.GroupTag){"(No Grouptag)"}
             $ErrorCode = if($AutopilotImport.GroupTag){"(Bad Grouptag)"}
 
@@ -710,23 +722,27 @@ else {
     Write-Log -LogOutput ("Nothing to import due to bad permissions...") -Path $LogFile   
 }
 
-### Third stage actually import the devices in Autopilot
+Write-Output "End second stage get hardware info"
+Write-Log -LogOutput ("End second stage get hardware info") -Path $LogFile
+### End second stage get hardware info
+
+### Third stage importing devices in Autopilot
 if(!$correctDevices){
     Write-Output "Nothing to import due to bad hardware info..."
     Write-Log -LogOutput ("Nothing to import due to bad hardware info...") -Path $LogFile
 }
 
-# Device is correct laten staan in CheckedCombinedOutput
-# Device is niet correct weghalen uit CheckedCombinedOutput
+# $correctDevices staat nu de waarheid in over wat geimporteerd is
+# $global:badDevices staat nu de waarheid in over wat niet gelukt is
 
 Else {
     Import-AutoPilotCSV $CheckedCombinedOutput -LogFile $LogFile
     Write-Log -LogOutput ("Entries found start importing devices...") -Path $LogFile
 }
 
-Write-Output "Finished main logic."
-Write-Log -LogOutput ("Finished main logic.") -Path $LogFile
-# End main logic
+Write-Output "End third stage importing devices in Autopilot"
+Write-Log -LogOutput ("End third stage importing devices in Autopilot") -Path $LogFile
+### End third stage importing devices in Autopilot
 
 # Post logic
 
