@@ -1,4 +1,4 @@
-#Requires -Module  AzAccount, AzureAD
+#Requires -Module  PnP.PowerShell, AzureAD
 
 <#PSScriptInfo
 .VERSION 1.0
@@ -8,44 +8,48 @@
 #>
 <#
 .SYNOPSIS
-Get HardwareID's from Blob storage and import in MEM.
+Get Autopilot CSV's from SharePoint and import in Autopilot with permission, condition and error check.
 .DESCRIPTION
-Get AutoPilot device information from Azure Blob Storage and import device in MEM.
-AutoPilot service via Intune API running from a Azure Automation runbook and Cleanup Blob Storage.
+Get Autopilot CSV's from SharePoint and import in Autopilot with permission, condition and error check.
 .NOTES
   Version:        1.0
   Author:         Ivo Uenk
-  Creation Date:  2022-07-28
-  Purpose/Change: Initial script development
+  Creation Date:  2022-08-11
+  Purpose/Change: Final Pre-prod
 #>
 
-# Pre logic
+# Variables
+$PathCsvFiles = "$env:TEMP"
+$checkedCombinedOutput = "$pathCsvFiles\checkedcombinedoutput.csv"
+$importFolderName = "/Shared Documents/ImportAutopilotDevice"
+$sourcesFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Sources"
+$importedFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Imported"
+$errorsFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Errors"
+$resourceFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Resources"
+$LogFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Logging"
+$oa3toolRelativeURL = $resourceFolderName + "/" + "oa3tool.exe"
+$OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
+$XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
+$LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
 
+# Declare checklist
+$mList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude','VivoBook_ASUSLaptop X513UA_M513UA') # Check Model
+$lList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check first part of Group Tag
+$cList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check Country
+$eList = @('00','01','91','92','93','94','95','96','97','98','99') # Check Entity
+
+# Credentials
 $intuneAutomationCredential = Get-AutomationPSCredential -Name "AutomationCreds"
 $userName = $intuneAutomationCredential.UserName  
 $securePassword = $intuneAutomationCredential.Password
 $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $userName, $securePassword 
 
-# Storage account
-$StorageAccountName = Get-AutomationVariable -Name 'StorageAccountName'
-$ContainerName = Get-AutomationVariable -Name 'ContainerName'
-$StorageKey = Get-AutomationVariable -Name 'StorageKey'
-
-$PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
-$LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + (Get-Date -UFormat "%d-%m-%Y") + ".log"
-
 # Connect to Microsoft services
-Connect-AzAccount -Credential $psCredential
-$accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
+Connect-AzureAD -Credential $psCredential
 
-# Connect to Microsoft services
-Connect-AzAccount -Credential $psCredential
-
-# Get connection info for storage account
-$accountContext = New-AzStorageContext -StorageAccountName $StorageAccountName -StorageAccountKey $StorageKey
-
-# End Pre logic
+$SiteURL = "https://ucorponline.sharepoint.com/sites/intune"
+Connect-PnPOnline -Url $SiteURL -Credentials $psCredential
+$folderItems = Get-PnPFolderItem -FolderSiteRelativeUrl $importFolderName -ItemType File
 
 # Functions
 
@@ -340,21 +344,20 @@ Function Import-AutoPilotCSV(){
         $deviceStatusesInitial = Get-AutoPilotImportedDevice
         $deviceCountInitial = $deviceStatusesInitial.Length
         if ($deviceCountInitial -ge 175) {
-            Write-Output "Previous cleanup didn't work, stopping any further actions to prevent filling up Autopilot imported device space!"
+            Write-Log -LogOutput ("Previous cleanup didn't work, stopping any further actions to prevent filling up Autopilot imported device space!") -Path $LogFile
             Exit
         }
  
         # Read CSV and process each device
         $devices = Import-CSV $csvFile
 
-        foreach ($device in $devices | Where-Object {$device.'Device Serial Number' -in $global:correctDevices}) {
+        foreach ($device in $devices) {
         $Serial = $device.'Device Serial Number'
         Add-AutoPilotImportedDevice -serialNumber $Serial -hardwareIdentifier $device.'Hardware Hash' -orderIdentifier $orderIdentifier -groupTag $device.'Group Tag'
-        Write-Log -LogOutput ("Importing device: $Serial") -Path $LogFile
+        Write-Log -LogOutput ("Importing device: $Serial.") -Path $LogFile
         }
 
-        # While we could keep a list of all the IDs that we added and then check each one, it is 
-        # easier to just loop through all of them
+        # While we could keep a list of all the IDs that we added and then check each one, it is easier to just loop through all of them
         $processingCount = 1
         while ($processingCount -gt 0)
         {
@@ -378,29 +381,39 @@ Function Import-AutoPilotCSV(){
 
         # Generate some statistics for reporting
         $global:totalCount = $deviceStatuses.Count
+        $global:succesDevice = @()
         $global:successCount = 0
         $global:errorCount = 0
+        $global:errorDevice = @()
         $global:softErrorCount = 0
+        $global:softErrorDeviceAlreadyAssigned = @()
+        $global:softErrorDeviceAssignedOtherTenant = @()
         $global:errorList = @{}
 
         ForEach ($deviceStatus in $deviceStatuses) {
         $Device = $deviceStatus.serialNumber
 
-        if (($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'success' -or $($deviceStatus.state.deviceImportStatus).ToLower() -eq 'complete'))  {
-            $global:successCount += 1
-            Write-Log -LogOutput ("Import completed for device: $Device") -Path $LogFile
+            if (($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'success' -or $($deviceStatus.state.deviceImportStatus).ToLower() -eq 'complete'))  {
+                $global:successCount += 1
+                $global:successDevice += $device
+                Write-Log -LogOutput ("Import completed for device: $Device.") -Path $LogFile
 
-        } elseif ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'error') {
-            $global:errorCount += 1
-            # ZtdDeviceAlreadyAssigned will be counted as soft error, free to delete
-            Write-Log -LogOutput ("Import failed for device $Device") -Path $LogFile
+            } elseif ($($deviceStatus.state.deviceImportStatus).ToLower() -eq 'error') {
+                $global:errorCount += 1
+                $global:errorDevice += $Device
+                # Device is already registered to the same Tenant
+                Write-Log -LogOutput ("Import failed for device $Device.") -Path $LogFile
 
-            if ($($deviceStatus.state.deviceErrorCode) -eq 806) {
-                $global:softErrorCount += 1
-                Write-Log -LogOutput ("Device already exist: $Device") -Path $LogFile
+                if ($($deviceStatus.state.deviceErrorCode) -eq 806) {
+                    $global:softErrorCount += 1
+                    $global:softErrorDeviceAlreadyAssigned += $Device
+                    Write-Log -LogOutput ("Device already exist in same tenant: $Device.") -Path $LogFile
+                
+                } elseif ($($deviceStatus.state.deviceErrorCode) -eq 808) {
+                    $global:softErrorCount += 1
+                    $global:softErrorDeviceAssignedOtherTenant += $Device
+                    Write-Log -LogOutput ("Device is assigned to another tenant: $Device.") -Path $LogFile
                 }
-
-            $global:errorList.Add($deviceStatus.serialNumber, $devicestatus.state)
             }
         }
 
@@ -416,9 +429,8 @@ Function Import-AutoPilotCSV(){
 
 		# Sync new devices to Intune
 		Write-output "Triggering Sync to Intune."
-        Write-Log -LogOutput ("Triggering sync to Intune after imports") -Path $LogFile
+        Write-Log -LogOutput ("Triggering sync to Intune after imports.") -Path $LogFile
 		Invoke-AutopilotSync
-
 }
 
 Function Invoke-AutopilotSync(){
@@ -465,216 +477,343 @@ Function Write-Log{
 	"[$currentDate $currentTime] $logOutput" | Out-File $Path -Append
 }
 
-# End Functions
+Function Get-HardwareInfo(){
+    [CmdletBinding(DefaultParameterSetName="OA3ToolPath",
+                   SupportsShouldProcess=$true,
+                   PositionalBinding=$true
+                  )]
+    Param(
+        [Parameter(Mandatory=$true,
+                   ValueFromPipelineByPropertyName=$true,
+                   Position=0)]
+                  
+        $OA3ToolPath,
+        [Parameter(Mandatory=$true)] $csvFile,
+        [Parameter(Mandatory=$true)] $XMLFile,
+        [Parameter(Mandatory=$true)] $LogFile
+    )
 
-# Main logic
-$global:totalCount = 0
-Connect-AutoPilotIntune
+        # Read CSV and process each device
+        $devices = Import-CSV $csvFile
+        $global:AutopilotImports = @()
 
-$PathCsvFiles = "$env:TEMP"
-$CombinedOutput = "$pathCsvFiles\combined.csv"
-$oa3tool = "$pathCsvFiles\oa3tool.exe"
-$XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
-$LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
-
-# Check if parameters are correct
-$mList = @('HP EliteBook','HP ProBook','HP ProDesk','HP Z4 G4','HP ZBook','Latitude') # Check modellist
-$lList = @('A-CDS-O-P-L','A-CDS-O-C-L','A-CDS-O-C-D') # Check part of Group Tag
-$cList = @('AE','AU','BE','BG','BR','CH','CZ','DE','ES','FR','CB','HK','HU','ID','IE','IT','JP','KR','LK','LU','NL','PH','PL','RO','RU','SG','SK','TW','UA','US','VN') # Check part of Group Tag
-$eList = @('00','01','91','92','93','94','95','96','97','98','99') # Check part of Group Tag
-
-$countOnline = $(Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Measure-Object).Count
-if ($countOnline -gt 0) {
-    Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Get-AzStorageBlobContent -Force -Destination $PathCsvFiles | Out-Null
-
-    # Intune has a limit for 175 rows as maximum allowed import currently! We select max 175 csv files to combine them
-    $downloadFiles = Get-ChildItem -Path $PathCsvFiles -Filter "*.csv" | Select-Object -First 175
-
-    # parse all .csv files and combine to single one for batch upload!
-    Set-Content -Path $CombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag" -Encoding Unicode
-    $downloadFiles | ForEach-Object { Get-Content $_.FullName | Select-Object -Index 1 } | Add-Content -Path $CombinedOutput -Encoding Unicode
-}
-
-# Import combined CSV
-if (Test-Path $CombinedOutput) {
-    $devices = Import-Csv -Path $CombinedOutput
-    $AutopilotImports = @()
-    $global:correctDevices = @()
-    $badDevices = @()
-
-    Foreach ($Device in $Devices){
-    $Serial = $device.'Device Serial Number'
+        Foreach ($Device in $Devices){
+        $Serial = $device.'Device Serial Number'
         
         Try {
             $Hash = $device.'Hardware Hash'
-            Invoke-Expression -Command ("$oa3tool /DecodeHwHash=$Hash /LogTrace=$XMLFile")
+            Start-Process -FilePath $OA3ToolPath -ArgumentList "/DecodeHwHash=$Hash /LogTrace=$XMLFile" -Wait
             [xml]$xmldata = Get-Content -Path $XMLFile -raw
             $h = [xml]$xmldata
         
-
             $s = $h.HardwareReport.HardwareInventory.p | Where-Object {$_.n -eq "SmbiosSystemSerialNumber"}
             $m = $h.HardwareReport.HardwareInventory.p | Where-Object {$_.n -eq "SmbiosSystemProductName"}
             $t = $h.HardwareReport.HardwareInventory.p | Where-Object {$_.n -eq "TPMVersion"}
 
-            Write-Log -LogOutput ("Hardware report ran successfully for device: $Serial") -Path $LogFile
-
             $obj = new-object psobject -Property @{
                 SerialNumber = $s.v
+                WindowsProductID = $device.'Windows Product ID'
+                Hash = $device.'Hardware Hash'
                 Model = $m.v
                 GroupTag = $device.'Group Tag'
                 TPMVersion = $t.v
+                Owner = $device.'Owner'
             }
-
-            $AutopilotImports += $obj
+            $global:AutopilotImports += $obj
+            Write-Log -LogOutput ("Hardware report ran successfully for device: $Serial.") -Path $LogFile
         }
+        
         Catch {
-            Write-Log -LogOutput ("Bad hardware hash for device: $Serial") -Path $LogFile           
+            $obj = new-object psobject -Property @{
+                SerialNumber = $s.v
+                WindowsProductID = $device.'Windows Product ID'
+                Hash = $device.'Hardware Hash'
+                Model = $m.v
+                groupTag = $Device.'Group Tag'
+                TPMVersion = $t.v
+                Owner = $device.'Owner'
+                Error = "Bad hardware hash"
+            }
+            $global:badDevices += $obj
+            Write-Log -LogOutput ("Bad hardware hash for device: $Serial.") -Path $LogFile
         }
     }
+}
 
-    foreach ($AutopilotImport in $AutopilotImports){
+# End Functions
+
+### first stage: download and prepare files
+# Start downloading files from SharePoint
+$su = $SiteURL.split("/",4)[-1]
+$CSVtoImport = @()
+
+# Download oa3tool.exe
+Get-PnPFile -Url $oa3toolRelativeURL -Path $PathCsvFiles -FileName "oa3tool.exe" -AsFile -Force
+
+# Download CSV files from SharePoint
+foreach($item in $folderItems){
+    # Get filename and createdby
+    $FileName = $item.Name
+    $FileRelativeURL = ("/" + $su + $importFolderName + "/" + $FileName)
+    $File = Get-PnPFile -Url "$FileRelativeURL" -AsListItem
+
+    $obj = new-object psobject -Property @{
+        FileName = $File["FileLeafRef"]
+        CreatedBy = $File["Created_x0020_By"].Split("|",3)[-1]
+    }
+    $CSVtoImport += $obj
+
+    Get-PnPFile -Url $FileRelativeURL -Path $PathCsvFiles -FileName $FileName -AsFile -Force
+    Write-Log -LogOutput ("File $FileName downloaded to $PathCsvFiles.") -Path $LogFile
+	
+	# remove the file the downloaded file from SharePoint
+	#Remove-PnPFile -ServerRelativeUrl $FileRelativeURL -Force
+    $targetLibraryUrl = $sourcesFolderName + '/' + $FileName
+    Move-PnPFile -SourceUrl $item.ServerRelativeUrl -TargetUrl $targetLibraryUrl -AllowSchemaMismatch -Force -AllowSmallerVersionLimitOnDestination  
+}
+
+Write-Log -LogOutput ("End first stage: download and prepare files.") -Path $LogFile
+### End first stage: download and prepare files
+
+### Second stage: permission check
+$gclist = @()
+$gelist = @()
+$global:badDevices = @()
+
+Set-Content -Path $CheckedCombinedOutput -Value "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag,Owner" -Encoding Unicode
+
+Foreach ($CSV in $CSVtoImport) {
+    $pathCSV = get-childitem ($pathCsvFiles + "\" + $CSV.FileName)
+    $ownerCSV = $CSV.CreatedBy
+    $Entries = Import-Csv -path $pathCSV 
+
+    # Get owner GSAFO1-CMW-Intune-Device-Operator groups assignments
+    $Groups = (Get-AzureADUser -ObjectId $ownerCSV | Get-AzureADUserMembership | Where-Object {$_.DisplayName -like "GSAFO1-CMW-Intune-Device-Operator*"}).DisplayName
+
+    Foreach ($Group in $Groups){
+        $g = "{0}-{1}-{2}-{3}-{4}-{5}-{6}" -f $Group.Split('-')
+        $gc = $g.Split("-")[-2] # Get country group
+        $ge = $g.Split("-")[-1] # Get entity group
+        
+        $gclist += $gc
+        $gelist += $ge
+        }
+
+    Foreach ($Entry in $Entries){
+        $es = $entry.'Device Serial Number'
+        $et = $entry.'Group Tag'
+        $e = "{0}-{1}-{2}-{3}-{4}" -f $et.Split('-')
+        $tc = $et.Split("-")[-2] # Get country tag
+        $te = $et.Split("-")[-1] # Get entity tag    
+
+        # Correct entries will be added to the CheckedCombinedOutput list
+        If (($tc -in $gclist) -and ($te -in $gelist)){
+            "{0},{1},{2},{3},{4}" -f $es,$entry.'Windows Product ID',$Entry.'Hardware Hash',$et,$ownerCSV | Add-Content -Path $CheckedCombinedOutput -Encoding Unicode
+            Write-Log -LogOutput ("$ownerCSV has permission on $et add $es to import list.") -Path $LogFile
+        }
+        # Bad entries will be added to the $global:badDevices variable 
+        Else {
+            $obj = new-object psobject -Property @{
+                SerialNumber = $es
+                WindowsProductID = $entry.'Windows Product ID'
+                Hash = $Entry.'Hardware Hash'
+                groupTag = $et
+                model = "Model not checked"
+                TPMVersion = "TPM not checked"
+                Owner = $ownerCSV
+                Error = "(No permissions)"
+            }
+            # Conditions are not met add device
+            $global:badDevices += $obj
+            Write-Log -LogOutput ("$ownerCSV no permission on $et do not import $es.") -Path $LogFile
+        }     
+    }
+}
+
+Write-Log -LogOutput ("End second stage: permission check.") -Path $LogFile
+### End second stage: permission check
+
+### Third stage: get hardware info and check if conditions are met
+$emptyCheck = Import-CSV $checkedCombinedOutput
+If (!$emptyCheck) {Remove-item $checkedCombinedOutput -ErrorAction SilentlyContinue}
+
+if (Test-Path $checkedCombinedOutput) {
+	Get-HardwareInfo -csvFile $CheckedCombinedOutput -OA3ToolPath $OA3ToolPath -LogFile $LogFile -XMLFile $XMLFile
+    Write-Log -LogOutput ("Get HardwareInfo...") -Path $LogFile
+
+    $correctDevices = @()
+
+    foreach ($AutopilotImport in $global:AutopilotImports){
     $Serial = $AutopilotImport.SerialNumber
     # Check if Group Tag is set correctly
         Try {
-        $i = $AutopilotImport.GroupTag
-        $d = "{0}-{1}-{2}-{3}-{4}" -f $i.Split('-')
-        $c = $i.Split("-")[-2] # NL
-        $e = $i.Split("-")[-1] # 00
+        $at = $AutopilotImport.GroupTag
+        $l = "{0}-{1}-{2}-{3}-{4}" -f $at.Split('-')
+        $c = $at.Split("-")[-2] # Get country tag
+        $e = $at.Split("-")[-1] # Get entity tag
             
-            # Check conditions
-            if (($d -in $lList) -and ($c -in $cList) -and ($e -in $eList) `
+            # Check if conditions are met
+            if ((($l -in $lList) -and ($c -in $cList) -and ($e -in $eList)) `
             -and ($AutopilotImport.Model -in $mList) `
             -and ($AutopilotImport.SerialNumber -eq $Serial) `
             -and ($AutopilotImport.TPMVersion -like "*2.0*")){
-            
+
+            $obj = new-object psobject -Property @{
+                SerialNumber = $Serial
+                WindowsProductID = $AutopilotImport.WindowsProductID
+                Hash = $AutopilotImport.Hash
+                groupTag = $AutopilotImport.GroupTag
+                model = $AutopilotImport.Model
+                TPMVersion = $AutopilotImport.TPMVersion
+                Owner = $AutopilotImport.Owner
+            }
             # Conditions are met add device
-            $global:correctDevices += $AutopilotImport.SerialNumber
-            Write-Log -LogOutput ("Device: $Serial added to import list") -Path $LogFile
+            $correctDevices += $obj
+
+            Write-Log -LogOutput ("Device: $Serial conditions are met remain on import list.") -Path $LogFile
             }                            
        
             Else {
-
-                $ErrorGroupTag = "(Bad Grouptag)"
+                $ErrorGroupTag = if(!($l -in $lList) -and ($c -in $cList) -and ($e -in $eList)){"(Bad Grouptag)"}
                 $ErrorModel = if($AutopilotImport.Model -notin $mList){"(Bad Model)"}
                 $ErrorSerial = if($AutopilotImport.SerialNumber -ne $Serial){"(Bad SerialNumber)"}
                 $ErrorTMP = if($AutopilotImport.TPMVersion -notlike "*2.0*"){"(Bad TPM)"}
 
                 $obj = new-object psobject -Property @{
                     SerialNumber = $Serial
+                    WindowsProductID = $AutopilotImport.WindowsProductID
+                    Hash = $AutopilotImport.Hash
                     groupTag = $AutopilotImport.GroupTag
                     model = $AutopilotImport.Model
                     TPMVersion = $AutopilotImport.TPMVersion
+                    Owner = $AutopilotImport.Owner
                     Error = $ErrorSerial+$ErrorModel+$ErrorGroupTag+$ErrorTMP
                 }
-
-                $badDevices += $obj
-                Write-Log -LogOutput ("Bad device: $Serial error $ErrorSerial$ErrorModel$ErrorGroupTag$ErrorTMP") -Path $LogFile
-                }
+                # Conditions are not met add device
+                $global:badDevices += $obj                
+                # Remove $Serial from $checkedCombinedOutput
+                (Get-Content $checkedCombinedOutput) | Where-Object {$_ -notmatch $Serial} | Set-Content $checkedCombinedOutput -Encoding Unicode
+                Write-Log -LogOutput ("Bad device: $Serial error $ErrorSerial$ErrorModel$ErrorGroupTag$ErrorTMP removed from import list.") -Path $LogFile
+            }
         }
 
         Catch {
-
             $ErrorCode = if(!$AutopilotImport.GroupTag){"(No Grouptag)"}
             $ErrorCode = if($AutopilotImport.GroupTag){"(Bad Grouptag)"}
 
             $obj = new-object psobject -Property @{
                 SerialNumber = $Serial
+                WindowsProductID = $AutopilotImport.WindowsProductID
+                Hash = $AutopilotImport.Hash
                 groupTag = $AutopilotImport.GroupTag
                 model = $AutopilotImport.Model
                 TPMVersion = $AutopilotImport.TPMVersion
+                Owner = $AutopilotImport.Owner
                 Error = $ErrorCode
             }
 
             # Add wrong group tag devices to list below
-            $badDevices += $obj
-            Write-Log -LogOutput ("Bad device: $Serial error $ErrorCode") -Path $LogFile    
-            }
-     }
+            $global:badDevices += $obj
+
+            # Remove $Serial from $checkedCombinedOutput
+            (Get-Content $checkedCombinedOutput) | Where-Object {$_ -notmatch $Serial} | Set-Content $checkedCombinedOutput -Encoding Unicode
+            Write-Log -LogOutput ("Bad device: $Serial error $ErrorCode removed from import list.") -Path $LogFile    
+        }
+    }
 }
        
-else {
-    Write-Output "Nothing to import."
+else {Write-Log -LogOutput ("Nothing to import due to bad permissions...") -Path $LogFile}
+
+Write-Log -LogOutput ("End third stage: get hardware info and check if conditions are met.") -Path $LogFile
+### End third stage: get hardware info and check if conditions are met
+
+### Fourth stage: importing checked devices in Autopilot
+if(!$correctDevices){
+    Write-Log -LogOutput ("Nothing to import due to bad hardware info...") -Path $LogFile
 }
 
-
-# Add a batch of AutoPilot devices
-if(!$global:correctDevices){
-    Write-Output "Nothing to import."
-    Write-Log -LogOutput ("Nothing to import.") -Path $LogFile
-}
+# Eigenlijk deze checken op regels $checkedCombinedOutput
 
 Else {
-    Import-AutoPilotCSV $CombinedOutput -LogFile $LogFile
-    Write-Log -LogOutput ("Entries found start importing devices...") -Path $LogFile
-}
-
-Write-Output "Finished main logic."
-Write-Log -LogOutput ("Finished main logic.") -Path $LogFile
-# End main logic
-
-# Post logic
-
-# Online blob storage cleanup
-$downloadFilesSearchableByName = @{}
-$downloadFilesSearchableBySerialNumber = @{}
-
-    ForEach ($downloadFile in $downloadFiles) {
-    $serialNumber = $(Get-Content $downloadFile.FullName | Select-Object -Index 1 ).Split(',')[0]
-
-    $downloadFilesSearchableBySerialNumber.Add($serialNumber, $downloadFile.Name)
-    $downloadFilesSearchableByName.Add($downloadFile.Name, $serialNumber)
-}
-$serialNumber = $null
-
-$csvBlobs = Get-AzStorageContainer -Container $ContainerName -Context $accountContext | Get-AzStorageBlob | Where-Object {$_.Name -like "*.csv"}
+    $global:totalCount = 0
     
-ForEach ($csvBlob in $csvBlobs) {
+    Connect-AutoPilotIntune
+    Import-AutoPilotCSV $CheckedCombinedOutput -LogFile $LogFile
 
-    $ImportFile = $csvBlob.Name
-    $serialNumber = $downloadFilesSearchableByName[$csvBlob.Name]
+    ForEach ($AutopilotImport in $global:AutopilotImports){
+    $Device = $AutopilotImport.SerialNumber
 
-    if ($serialNumber) {
-        ForEach ($number in $global:errorList.Keys){
-            if ($number -eq $serialNumber){
-                $Errocode = "Error during import"
-                if ($global:errorList[$number].deviceErrorCode -eq 806) {
-                    $Errocode = "Device already imported"
-                    }
-                }
-                             
-                $obj = new-object psobject -Property @{
-                SerialNumber = $number
-                Error = $ErrorCode
-                }
+        if ($Device -in $global:successDevice) {
+            # Do nothing device is imported successfully
 
-                $badImports += $obj
-        }  
-           
-     }          
-     
-     Remove-AzStorageBlob -Container $ContainerName -Blob $csvBlob.Name -Context $accountContext
-     Write-Log -LogOutput ("Remove $ImportFile from container: $ContainerName.") -Path $LogFile         
+        } elseif (($Device -in $global:errorDevice) -or ($Device -in $global:softErrorDeviceAlreadyAssigned) -or ($Device -in $global:softErrorDeviceAssignedOtherTenant)){
+            $FatalError = if($Device -in $global:ErrorCode){"(Fatal error during import)"}
+            $ZtdDeviceAlreadyAssigned = if($Device -in $global:softErrorDeviceAlreadyAssigned){"(Device already assigned in Autopilot)"}
+            $ZtdDeviceAssignedToOtherTenant = if($Device -in $global:softErrorDeviceAssignedOtherTenant){"(Device is assigned to another tenant)"}
+
+            $obj = new-object psobject -Property @{
+                SerialNumber = $Device
+                WindowsProductID = $AutopilotImport.WindowsProductID
+                Hash = $AutopilotImport.Hash
+                groupTag = $AutopilotImport.GroupTag
+                model = $AutopilotImport.Model
+                TPMVersion = $AutopilotImport.TPMVersion
+                Owner = $AutopilotImport.Owner
+                Error = $FatalError+$ZtdDeviceAlreadyAssigned+$ZtdDeviceAssignedToOtherTenant
+            }
+            $global:badDevices += $obj
+
+            # Remove $Serial from $checkedCombinedOutput
+            (Get-Content $checkedCombinedOutput) | Where-Object {$_ -notmatch $Device} | Set-Content $checkedCombinedOutput -Encoding Unicode
+            Write-Log -LogOutput ("Bad device: $Device error $FatalError$ZtdDeviceAlreadyAssigned$ZtdDeviceAssignedToOtherTenant removed from import list.") -Path $LogFile    
+        }
+    }
 }
 
+Write-Log -LogOutput ("End fourth stage: importing checked devices in Autopilot.") -Path $LogFile
+### End fourth stage: importing checked devices in Autopilot
 
-# Export Autopilot import errors and upload to Azure Storage
-$ErrorsFilename = "Autopilot-Import-BadDevices" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
-$ErrorsFilePath = Join-Path $PathCsvFiles -ChildPath $ErrorsFilename
-$LogFilename = "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
+### Fifth stage: uploading and cleaning files
+# Export Autopilot imports and upload to SharePoint
+$CheckDevicesImported = Import-CSV $checkedCombinedOutput
 
-If(!$badDevices){
-    Write-Log -LogOutput ("No bad devices found.") -Path $LogFile
+If($CheckDevicesImported){
+$DevicesImported = "Autopilot-Import" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+$DevicesImportedPath = Join-Path $PathCsvFiles -ChildPath $DevicesImported
+
+$CheckDevicesImported | Select-Object 'Device Serial Number', 'Windows Product ID', 'Hardware Hash', 'Group Tag'  | Export-Csv -Path $DevicesImportedPath -Delimiter "," -NoTypeInformation
+Add-PnPFile -Path $DevicesImportedPath -Folder $importedFolderName 
+Write-Log -LogOutput ("Device imports found creating log file and upload to SharePoint.") -Path $LogFile
 }
 
-Else {
-	$badDevices | Select-Object SerialNumber, Model, GroupTag, TPMVersion, Error  | Export-Csv -Path $ErrorsFilePath -Delimiter ";" -NoTypeInformation
-    Set-AzStorageBlobContent -Container $ContainerName -File $ErrorsFilePath -Blob $ErrorsFilename -Context $accountContext
-    Write-Log -LogOutput ("Bad devices found creating log file.") -Path $LogFile
+Else {Write-Log -LogOutput ("No devices are imported due to errors check Autopilot-Import-Errors.csv.") -Path $LogFile}
+
+# Export Autopilot import errors and upload to SharePoint
+If($global:badDevices){
+    $ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+    $ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
+
+	$global:badDevices | Select-Object SerialNumber, WindowsProductID, Hash, Model, GroupTag, TPMVersion, Owner, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter "," -NoTypeInformation   
+    Add-PnPFile -Path $ImportErrorsPath -Folder $errorsFolderName
+    Write-Log -LogOutput ("Import errors found creating log file and upload to SharePoint.") -Path $LogFile
 }
 
-Write-Output "Finished post logic."
-Write-Log -LogOutput ("Finished post logic.") -Path $LogFile
+Else {Write-Log -LogOutput ("No bad devices found.") -Path $LogFile}
 
-Set-AzStorageBlobContent -Container $ContainerName -File $LogFile -Blob $LogFilename -Context $accountContext
+Write-Log -LogOutput ("End fifth stage: uploading and removing files.") -Path $LogFile
+### End fifth stage: uploading and cleaning files
 
-# End post logic
+# Upload log file
+Add-PnPFile -Path $LogFile -Folder $LogFolderName
+
+# Clean remaining files from hybrid worker temp folder
+$ItemsToRemove = @($CheckedCombinedOutput,$DevicesImportedPath,$ImportErrorsPath,$LogFile,$OA3ToolPath,$XMLFile)
+Foreach ($Item in $ItemsToRemove){
+    Try {
+        Remove-item $Item
+    } Catch {
+        #Item already removed or cannot be found
+    }
+}
+
+Foreach ($CSV in $CSVtoImport) {Remove-item ($pathCsvFiles + "\" + $CSV.FileName) -ErrorAction SilentlyContinue}
