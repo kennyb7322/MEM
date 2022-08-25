@@ -26,7 +26,7 @@ param
     try {
         $Resource = "deviceManagement/managedDevices/$managedDeviceId"
         $uri = "https://graph.microsoft.com/beta/$($Resource)" 
-        (Invoke-RestMethod -Uri $uri -Headers authToken -Method Get)
+        (Invoke-RestMethod -Uri $uri -Headers $authHeader -Method Get)
 
     } catch {
         Write-Output "No managed device found or insufficient permissions"
@@ -37,11 +37,11 @@ param
 $APDevices = @()
 $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
 
-$APDevicesResponse = (Invoke-RestMethod -Uri $uri -Headers authToken -Method Get)
-$APDevices = $APDevicesResponse.value | Select-Object Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
+$APDevicesResponse = (Invoke-RestMethod -Uri $uri -Headers $authHeader -Method Get)
+$APDevices = $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
 $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
 while ($null -ne $APDevicesNextLink) {
-    $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers authToken -Method Get)
+    $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers $authHeader -Method Get)
     $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
     $APDevices += $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
 }
@@ -66,7 +66,6 @@ Foreach ($APDevice in $APDevices){
             $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0)+ "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
             $Time = ($device.managedDeviceName -split "_").Item(4)
         }
-        $lastSyncDate = ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)
         "{0};{1};{2};{3};{4};{5};{6};{7};{8};{9};{10}" -f $APdevice.serialNumber,$APDevice.model,$APDevice.groupTag,$APDevice.enrollmentState,$device.deviceName,$device.userPrincipalName,$device.userDisplayName,$EnrollmentDate,$Time,$device.enrolledDateTime,$device.osVersion | Add-Content -Path $IntuneReport
 
     }

@@ -65,7 +65,7 @@ Foreach ($APDevice in $APDevices){
             $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0)+ "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
             $Time = ($device.managedDeviceName -split "_").Item(4)
         }
-        $lastSyncDate = ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)
+        $lastSyncDate = ((($device.lastSyncDateTime -split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)
         "{0};{1};{2};{3};{4};{5};{6};{7};{8};{9};{10};{11};{12};{13};{14};{15};{16};{17};{18};{19}" -f $APdevice.serialNumber,$Device.id,$APDevice.azureAdDeviceId,$device.deviceName,$APDevice.groupTag,$device.osVersion,$lastSyncDate,$APdevice.enrollmentState,$device.userPrincipalName,$EnrollmentDate,$Time,$device.enrolledDateTime,$APdevice.model,$APDevice.deploymentProfileAssignedDateTime,$APdevice.deploymentProfileAssignmentStatus,$device.ownerType,$device.managementState,$device.managementAgent,$device.complianceState,$device.joinType | Add-Content -Path $FullReport
 
     }
