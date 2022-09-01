@@ -613,32 +613,52 @@ Foreach ($CSV in $CSVtoImport) {
         }
 
     Foreach ($Entry in $Entries){
-        $es = $entry.'Device Serial Number'
-        $et = $entry.'Group Tag'
-        $e = "{0}-{1}-{2}-{3}-{4}" -f $et.Split('-')
-        $tc = $et.Split("-")[-2] # Get country tag
-        $te = $et.Split("-")[-1] # Get entity tag    
 
-        # Correct entries will be added to the CheckedCombinedOutput list
-        If (($tc -in $gcCountry) -and ($te -in $gcEntity)){
-            "{0},{1},{2},{3},{4}" -f $es,$entry.'Windows Product ID',$Entry.'Hardware Hash',$et,$ownerCSV | Add-Content -Path $CheckedCombinedOutput -Encoding Unicode
-            Write-Log -LogOutput ("$ownerCSV has permission on $et add $es to import list.") -Path $LogFile
-        }
-        # Bad entries will be added to the $global:badDevices variable 
-        Else {
+        if(!$entry.'Group Tag'){
+            $es = $entry.'Device Serial Number'
+
             $obj = new-object psobject -Property @{
                 SerialNumber = $es
                 WindowsProductID = $entry.'Windows Product ID'
                 Hash = $Entry.'Hardware Hash'
-                groupTag = $et
+                groupTag = ""
                 model = "Model not checked"
                 TPMVersion = "TPM not checked"
                 Owner = $ownerCSV
-                Error = "(No permissions)"
+                Error = "(No grouptag)"
             }
             # Conditions are not met add device
             $global:badDevices += $obj
-            Write-Log -LogOutput ("$ownerCSV no permission on $et do not import $es.") -Path $LogFile
+            Write-Log -LogOutput ("$ownerCSV no grouptag found do not import $es.") -Path $LogFile
+        }
+        Else {
+            $es = $entry.'Device Serial Number'
+            $et = $entry.'Group Tag'
+            $e = "{0}-{1}-{2}-{3}-{4}" -f $et.Split('-')
+            $tc = $et.Split("-")[-2] # Get country tag
+            $te = $et.Split("-")[-1] # Get entity tag    
+
+            # Correct entries will be added to the CheckedCombinedOutput list
+            If (($tc -in $gcCountry) -and ($te -in $gcEntity)){
+                "{0},{1},{2},{3},{4}" -f $es,$entry.'Windows Product ID',$Entry.'Hardware Hash',$et,$ownerCSV | Add-Content -Path $CheckedCombinedOutput -Encoding Unicode
+                Write-Log -LogOutput ("$ownerCSV has permission on $et add $es to import list.") -Path $LogFile
+            }
+            # Bad entries will be added to the $global:badDevices variable 
+            Else {
+                $obj = new-object psobject -Property @{
+                    SerialNumber = $es
+                    WindowsProductID = $entry.'Windows Product ID'
+                    Hash = $Entry.'Hardware Hash'
+                    groupTag = $et
+                    model = "Model not checked"
+                    TPMVersion = "TPM not checked"
+                    Owner = $ownerCSV
+                    Error = "(No permissions)"
+                }
+                # Conditions are not met add device
+                $global:badDevices += $obj
+                Write-Log -LogOutput ("$ownerCSV no permission on $et do not import $es.") -Path $LogFile
+            }
         }     
     }
 }
@@ -714,8 +734,9 @@ Else {
             }
 
             Catch {
-                $ErrorCode = if(!$AutopilotImport.GroupTag){"(No Grouptag)"}
-                $ErrorCode = if($AutopilotImport.GroupTag){"(Bad Grouptag)"}
+                $ErrorCode = if($AutopilotImport.GroupTag){
+                "(Bad Grouptag)"}
+                Else {"(No Grouptag)"}
 
                 $obj = new-object psobject -Property @{
                     SerialNumber = $Serial
@@ -811,31 +832,31 @@ $CSS = @"
 <caption>Error(s) from Autopilot import process</caption>
 <style>
 table, th, td {
-    border: 1px solid black;
-    border-collapse: collapse;
+  border: 1px solid black;
+  border-collapse: collapse;
 }
 th, td {
-    padding: 5px;
+  padding: 5px;
 }
 th {
-    text-align: left;
+  text-align: left;
 }
 </style>
 "@
 
     $u = ($global:badDevices | Select-Object Owner -Unique)
     $Users = $u.Owner
-    $Body = @() 
     
     Foreach ($User in $Users){
         $UserDevices = $global:badDevices | Where-Object {$_.Owner -eq $User}
+        $Body = @() 
 
         Foreach ($UserDevice in $UserDevices){
             
             $obj = new-object psobject -Property @{
             SerialNumber = $UserDevice.SerialNumber
             Model = $UserDevice.model
-            TPMVersion = $UserDevice.TPMVersion
+            TPMVersion = $UserDevice.TPMVersion.Split('-')[1]
             GroupTag = $UserDevice.groupTag
             Owner = $UserDevice.Owner
             Error = $UserDevice.Error
@@ -852,14 +873,14 @@ th {
             
         $Subject = "Error occured during Autopilot import for $User"
         Send-Mail -Recipient $User -Subject $Subject -Body $Content -MailSender $MailSender
-    } 
+    }
 
-    $ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
-    $ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
+	$ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+	$ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
 
-    $global:badDevices | Select-Object SerialNumber, WindowsProductID, Hash, Model, GroupTag, TPMVersion, Owner, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter "," -NoTypeInformation   
-    Add-PnPFile -Path $ImportErrorsPath -Folder $errorsFolderName
-    Write-Log -LogOutput ("Import errors found creating log file and upload to SharePoint.") -Path $LogFile
+	$global:badDevices | Select-Object SerialNumber, WindowsProductID, Hash, Model, GroupTag, TPMVersion, Owner, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter "," -NoTypeInformation   
+	Add-PnPFile -Path $ImportErrorsPath -Folder $errorsFolderName
+	Write-Log -LogOutput ("Import errors found creating log file and upload to SharePoint.") -Path $LogFile
 }
 
 Else {Write-Log -LogOutput ("No bad devices found.") -Path $LogFile}
