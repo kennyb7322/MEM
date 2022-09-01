@@ -31,6 +31,7 @@ $oa3toolRelativeURL = $resourceFolderName + "/" + "oa3tool.exe"
 $OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
 $XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
 $LogFile = $PathCsvFiles + "\" + "Autopilot-Actions" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".log"
+$MailSender = Get-AutomationVariable -Name "MailSender"
 
 # Declare checklist
 $Model = Get-AutomationVariable -Name "cModel"
@@ -499,6 +500,59 @@ Function Get-HardwareInfo(){
     }
 }
 
+Function Send-Mail{
+
+    param(
+	    [Parameter(Mandatory=$true)]$Recipient,
+	    [Parameter(Mandatory=$true)]$MailSender,
+        [Parameter(Mandatory=$false)]$RecipientCC,
+        [Parameter(Mandatory=$true)][string]$Subject,
+        [Parameter(Mandatory=$true)][string]$Body
+    )
+
+
+    $clientID = Get-AutomationVariable -Name "clientId"
+    $ClientSecret = Get-AutomationVariable -Name "clientSecret"
+    $tenantID = Get-AutomationVariable -Name "TenantId"
+ 
+    #Connect to GRAPH API
+    $tokenBody = @{
+        Grant_Type    = "client_credentials"
+        Scope         = "https://graph.microsoft.com/.default"
+        Client_Id     = $clientId
+        Client_Secret = $clientSecret
+    }
+    $tokenResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token" -Method POST -Body $tokenBody
+    $headers = @{
+        "Authorization" = "Bearer $($tokenResponse.access_token)"
+        "Content-type"  = "application/json"
+    }
+ 
+#Send Mail    
+$URLsend = "https://graph.microsoft.com/v1.0/users/$MailSender/sendMail"
+$BodyJsonsend = @"
+                    {
+                        "message": {
+                          "subject": "$Subject",
+                          "body": {
+                            "contentType": "HTML",
+                            "content": "$Body"
+                          },
+                          "toRecipients": [
+                            {
+                              "emailAddress": {
+                                "address": "$Recipient"
+                              }
+                            }
+                          ]
+                        },
+                        "saveToSentItems": "false"
+                      }
+"@
+ 
+    Invoke-RestMethod -Method POST -Uri $URLsend -Headers $headers -Body $BodyJsonsend
+}
+
 # End Functions
 
 ### first stage: download and prepare files
@@ -528,7 +582,7 @@ foreach($item in $folderItems){
 	# remove the file the downloaded file from SharePoint
 	#Remove-PnPFile -ServerRelativeUrl $FileRelativeURL -Force
     $targetLibraryUrl = $sourcesFolderName + '/' + $FileName
-    Move-PnPFile -SourceUrl $item.ServerRelativeUrl -TargetUrl $targetLibraryUrl -AllowSchemaMismatch -Force -AllowSmallerVersionLimitOnDestination  
+    Move-PnPFile -SourceUrl $item.ServerRelativeUrl -TargetUrl $targetLibraryUrl -AllowSchemaMismatch -Force -Overwrite -AllowSmallerVersionLimitOnDestination  
 }
 
 Write-Log -LogOutput ("End first stage: download and prepare files.") -Path $LogFile
@@ -749,14 +803,63 @@ Else {
     Else {Write-Log -LogOutput ("No devices are imported due to errors check Autopilot-Import-Errors.csv.") -Path $LogFile}
 }
 
-# Export Autopilot import errors and upload to SharePoint
+# Export Autopilot import errors, upload to SharePoint and send mail to user
 If($global:badDevices){
-	$ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
-	$ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
 
-	$global:badDevices | Select-Object SerialNumber, WindowsProductID, Hash, Model, GroupTag, TPMVersion, Owner, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter "," -NoTypeInformation   
-	Add-PnPFile -Path $ImportErrorsPath -Folder $errorsFolderName
-	Write-Log -LogOutput ("Import errors found creating log file and upload to SharePoint.") -Path $LogFile
+# Set the style for the email
+$CSS = @"
+<caption>Error(s) from Autopilot import process</caption>
+<style>
+table, th, td {
+    border: 1px solid black;
+    border-collapse: collapse;
+}
+th, td {
+    padding: 5px;
+}
+th {
+    text-align: left;
+}
+</style>
+"@
+
+    $u = ($global:badDevices | Select-Object Owner -Unique)
+    $Users = $u.Owner
+    $Body = @() 
+    
+    Foreach ($User in $Users){
+        $UserDevices = $global:badDevices | Where-Object {$_.Owner -eq $User}
+
+        Foreach ($UserDevice in $UserDevices){
+            
+            $obj = new-object psobject -Property @{
+            SerialNumber = $UserDevice.SerialNumber
+            Model = $UserDevice.model
+            TPMVersion = $UserDevice.TPMVersion
+            GroupTag = $UserDevice.groupTag
+            Owner = $UserDevice.Owner
+            Error = $UserDevice.Error
+            }
+
+            $Body += $obj | Select-Object SerialNumber, Model, TPMVersion, GroupTag, Owner, Error
+        }
+        
+        # Format content to be able to use it as body for send-mail
+        $Content = $Body | ConvertTo-Html | Out-String
+        $Content = $Content.Trim('<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">')
+        $Content = $Content.Replace('<html xmlns="http://www.w3.org/1999/xhtml">', '<html>')
+        $Content = $content.Replace("<title>HTML TABLE</title>", $CSS)
+            
+        $Subject = "Error occured during Autopilot import for $User"
+        Send-Mail -Recipient $User -Subject $Subject -Body $Content -MailSender $MailSender
+    } 
+
+    $ImportErrors = "Autopilot-Import-Errors" + "-" + ((Get-Date).ToString("dd-MM-yyyy-HHmm")) + ".csv"
+    $ImportErrorsPath = Join-Path $PathCsvFiles -ChildPath $ImportErrors
+
+    $global:badDevices | Select-Object SerialNumber, WindowsProductID, Hash, Model, GroupTag, TPMVersion, Owner, Error  | Export-Csv -Path $ImportErrorsPath -Delimiter "," -NoTypeInformation   
+    Add-PnPFile -Path $ImportErrorsPath -Folder $errorsFolderName
+    Write-Log -LogOutput ("Import errors found creating log file and upload to SharePoint.") -Path $LogFile
 }
 
 Else {Write-Log -LogOutput ("No bad devices found.") -Path $LogFile}
