@@ -91,8 +91,8 @@ $APDevcount = @($APdevices).Count
 
 Write-Output "There are" $DeviceCount "out of" $APDevcount "devices enrolled..." -ForegroundColor green
 
-.\GEN_Upload_to_SPO.ps1 -filename $Filename -siteurl $SiteURL -destinationpath $DestinationPath
-.\GEN_Upload_to_SPP.ps1 -filename $Filename -siteurl $SiteURL2 -destinationpath $DestinationPath2
+.\GEN_Upload_to_SPO.ps1 -filename $IntuneReport -siteurl $SiteURL -destinationpath $DestinationPath
+.\GEN_Upload_to_SPP.ps1 -filename $IntuneReport -siteurl $SiteURL2 -destinationpath $DestinationPath2
 
 # Cleanup files used for process
 Try {
