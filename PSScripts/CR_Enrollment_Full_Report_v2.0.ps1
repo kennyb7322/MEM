@@ -57,15 +57,26 @@ Foreach ($APDevice in $APDevices){
         $Device = Get-ManagedDevice -managedDeviceId $apdevice.managedDeviceId | Select-Object id,enrolledDateTime,deviceName,userPrincipalName,osVersion,ownerType,managementState,managementAgent,complianceState,lastSyncDateTime,managedDeviceName,joinType
         $DeviceCount += +1
 
+        # Reset EnrollmentDate and Time for devices that are not in MEM but have managedDeviceId
+        $EnrollmentDate = $null
+        $Time = $null
+
         Try {
-            $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(0)+ "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(2)
+            $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(2)
             $Time = ($device.managedDeviceName -split "_").Item(3)
+
+            Try {
+                $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
+                $Time = ($device.managedDeviceName -split "_").Item(4)
+            }
+            # Only use catch for catching error messages don't do actions here
+            Catch [System.Management.Automation.GetValueInvocationException]{
+	    }
         }
-        Catch{
-            $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0)+ "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
-            $Time = ($device.managedDeviceName -split "_").Item(4)
+        Catch [System.Management.Automation.GetValueInvocationException]{
         }
-        $lastSyncDate = ((($device.lastSyncDateTime -split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)
+        
+        $lastSyncDate = ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)
         "{0};{1};{2};{3};{4};{5};{6};{7};{8};{9};{10};{11};{12};{13};{14};{15};{16};{17};{18};{19}" -f $APdevice.serialNumber,$Device.id,$APDevice.azureAdDeviceId,$device.deviceName,$APDevice.groupTag,$device.osVersion,$lastSyncDate,$APdevice.enrollmentState,$device.userPrincipalName,$EnrollmentDate,$Time,$device.enrolledDateTime,$APdevice.model,$APDevice.deploymentProfileAssignedDateTime,$APdevice.deploymentProfileAssignmentStatus,$device.ownerType,$device.managementState,$device.managementAgent,$device.complianceState,$device.joinType | Add-Content -Path $FullReport
 
     }

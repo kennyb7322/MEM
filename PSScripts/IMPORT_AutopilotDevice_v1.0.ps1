@@ -12,7 +12,7 @@ Get Autopilot CSV's from SharePoint and import in Autopilot with permission, con
 .DESCRIPTION
 Get Autopilot CSV's from SharePoint and import in Autopilot with permission, condition and error check.
 .NOTES
-  Version:        1.1
+  Version:        1.0
   Author:         Ivo Uenk
   Creation Date:  2022-08-30
   Purpose/Change: Testing Pre-prod
