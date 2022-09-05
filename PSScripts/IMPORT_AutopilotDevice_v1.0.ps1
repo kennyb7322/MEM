@@ -21,12 +21,15 @@ Get Autopilot CSV's from SharePoint and import in Autopilot with permission, con
 # Variables
 $PathCsvFiles = "$env:TEMP"
 $checkedCombinedOutput = "$pathCsvFiles\checkedcombinedoutput.csv"
-$importFolderName = "/Shared Documents/ImportAutopilotDevice"
-$sourcesFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Sources"
-$importedFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Imported"
-$errorsFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Errors"
-$resourceFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Resources"
-$LogFolderName = "/sites/intune/Shared Documents/ImportAutopilotDevice/Logging"
+$SiteURL = Get-AutomationVariable -Name "siteurl"
+$ShortSiteURL = "/" + $SiteURL.split("/",4)[-1]
+$importFolderName = Get-AutomationVariable -Name "importFolderName"
+
+$sourcesFolderName = $ShortSiteURL + $importFolderName + "/Sources"
+$importedFolderName = $ShortSiteURL + $importFolderName + "/Imported"
+$errorsFolderName = $ShortSiteURL + $importFolderName + "/Errors"
+$resourceFolderName = $ShortSiteURL + $importFolderName + "/Resources"
+$LogFolderName = $ShortSiteURL + $importFolderName + "/Logging"
 $oa3toolRelativeURL = $resourceFolderName + "/" + "oa3tool.exe"
 $OA3ToolPath = "$pathCsvFiles\oa3tool.exe"
 $XMLFile = $pathCsvFiles + "\" + "Autopilot" + ".xml"
@@ -52,7 +55,6 @@ $psCredential = New-Object -TypeName System.Management.Automation.PSCredential -
 # Connect to Microsoft services
 Connect-AzureAD -Credential $psCredential
 
-$SiteURL = "https://ucorponline.sharepoint.com/sites/intune"
 Connect-PnPOnline -Url $SiteURL -Credentials $psCredential
 $folderItems = Get-PnPFolderItem -FolderSiteRelativeUrl $importFolderName -ItemType File
 

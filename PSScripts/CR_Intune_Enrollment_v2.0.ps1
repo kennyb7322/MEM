@@ -61,20 +61,18 @@ Foreach ($APDevice in $APDevices){
         $EnrollmentDate = $null
         $Time = $null
 
-        Try {
-            $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(2)
-            $Time = ($device.managedDeviceName -split "_").Item(3)
+		Try {
+			$EnrollmentDate = ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(2)
+			$Time = ($device.managedDeviceName -split "_").Item(3)
+		
+        } Catch [System.Management.Automation.GetValueInvocationException]{
 
-            Try {
-                $EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
-                $Time = ($device.managedDeviceName -split "_").Item(4)
-            }
-            # Only use catch for catching error messages don't do actions here
-            Catch [System.Management.Automation.GetValueInvocationException]{
-            }
-        }
-        Catch [System.Management.Automation.GetValueInvocationException]{
-        }
+			Try {
+				$EnrollmentDate = ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(3)) -split "/").item(2)
+				$Time = ($device.managedDeviceName -split "_").Item(4)
+			
+            } Catch [System.Management.Automation.GetValueInvocationException] {}
+		}
 
         # Otherwise userDisplayName will be insterted into two columns
         $userDisplayName = ($device.userDisplayName -replace (',', '.'))
