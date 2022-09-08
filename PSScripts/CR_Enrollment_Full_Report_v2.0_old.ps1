@@ -13,44 +13,51 @@ $FullReportDate = "$Path\Enrollment_Full_Report_$FileSuffix.csv"
 $SiteURL = Get-AutomationVariable -Name SPOEnrollmentSiteUrl
 $DestinationPath = Get-AutomationVariable -Name SPOEnrollmentDestinationPath
 
-$uri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices?"
+function Get-ManagedDevice {
 
-        $DevicesResponse = (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get)
-        $Devices = $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,userDisplayName,osVersion,managedDeviceName,enrolledDateTime
-        $DevicesNextLink = $DevicesResponse."@odata.nextLink"
+[cmdletbinding()]
 
-        while ($null -ne $DevicesNextLink){
-            $DevicesResponse = (Invoke-RestMethod -Uri $DevicesNextLink -Headers $authToken -Method Get)
-            $DevicesNextLink = $DevicesResponse."@odata.nextLink"
-            $Devices += $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,userDisplayName,osVersion,managedDeviceName,enrolledDateTime
-        }
+param
+(
+    $managedDeviceId
+)
 
-$uri2 = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
+    try {
+        $Resource = "deviceManagement/managedDevices/$managedDeviceId"
+        $uri = "https://graph.microsoft.com/beta/$($Resource)" 
+        (Invoke-RestMethod -Uri $uri -Headers $authHeader -Method Get)
 
-        $APDevicesResponse = (Invoke-RestMethod -Uri $uri2 -Headers $authToken -Method Get)
-        $APDevices = $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
-        $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
-        while ($null -ne $APDevicesNextLink) {
-            $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers $authToken -Method Get)
-            $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
-            $APDevices += $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
-            }
+    } catch {
+        Write-Output "No managed device found or insufficient permissions"
+    }
+}
 
-$DeviceCount = @($Devices).count
-$APDevcount = @($APdevices).Count
+# Get all Autopilot devices
+$APDevices = @()
+$uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
 
-# Check if Autopilot device is enrolled and get info
-Write-Output "There are" $DeviceCount "out of" $APDevcount "devices enrolled..." -ForegroundColor green
-Write-Output "Creating the list..." -ForegroundColor yellow
+$APDevicesResponse = (Invoke-RestMethod -Uri $uri -Headers $authHeader -Method Get)
+$APDevices = $APDevicesResponse.value | Select-Object serialNumber,managedDeviceId,azureAdDeviceId,groupTag,model,enrollmentState,deploymentProfileAssignedDateTime,deploymentProfileAssignmentStatus
+$APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
+while ($null -ne $APDevicesNextLink) {
+    $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers $authHeader -Method Get)
+    $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
+    $APDevices += $APDevicesResponse.value | Select-Object serialNumber,managedDeviceId,azureAdDeviceId,groupTag,model,enrollmentState,deploymentProfileAssignedDateTime,deploymentProfileAssignmentStatus
+}
 
-# Create CSV file where data will be written to
 Set-Content -Path $FullReport -Value "Serial;Intune_ID;Azure_ID;Devicename;GroupTag;OSVersion;lastSyncDate;enrollmentState;userPrincipalName;Enrollement_Date;Time;Enrolled;Model;deploymentProfileAssignedDateTime;deploymentProfileAssignmentStatus;OwnerType;ManagementState;ManagementAgent;ComplianceState;JoinType"
 
+# Check if Autopilot device is enrolled and get info
+Write-Output "Creating the list..." -ForegroundColor yellow
+
+$DeviceCount = $null
 Foreach ($APDevice in $APDevices){
     if ($apdevice.managedDeviceId -ne "00000000-0000-0000-0000-000000000000"){
 
-        $Device = $Devices | Where-Object Id -eq $apdevice.managedDeviceId | Select-Object id,enrolledDateTime,deviceName,userPrincipalName,osVersion,ownerType,managementState,managementAgent,complianceState,lastSyncDateTime,managedDeviceName,joinType
+        $Device = Get-ManagedDevice -managedDeviceId $apdevice.managedDeviceId | Select-Object id,enrolledDateTime,deviceName,userPrincipalName,osVersion,ownerType,managementState,managementAgent,complianceState,lastSyncDateTime,managedDeviceName,joinType
+        $DeviceCount += +1
 
+        # Reset EnrollmentDate and Time for devices that are not in MEM but have managedDeviceId
         $EnrollmentDate = $null
         $Time = $null
 
@@ -75,6 +82,10 @@ Foreach ($APDevice in $APDevices){
     	"{0};{1};{2};{3};{4};{5};{6};{7};{8};{9};{10};{11};{12};{13};{14};{15};{16};{17};{18};{19}" -f $APdevice.serialNumber,"",$APDevice.azureAdDeviceId,"",$APDevice.groupTag,"","",$APdevice.enrollmentState,"","","","",$APdevice.model,$APDevice.deploymentProfileAssignedDateTime,$APdevice.deploymentProfileAssignmentStatus,"","","","","" | Add-Content -Path $FullReport
     }
 }
+
+$APDevcount = @($APdevices).Count
+
+Write-Output "There are" $DeviceCount "out of" $APDevcount "devices enrolled..." -ForegroundColor green
 
 Copy-Item $FullReport $FullReportDate
 
