@@ -1,0 +1,102 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "imageTemplateName": {
+        "type": "string"
+        },
+        "api-version": {
+          "type": "string"
+        },
+        "svclocation": {
+            "type": "string"
+        }
+    },
+    
+    "variables": {
+    },
+
+
+    "resources": [
+      {
+        "name": "[parameters('imageTemplateName')]",
+        "type": "Microsoft.VirtualMachineImages/imageTemplates",
+        "apiVersion": "[parameters('api-version')]",
+        "location": "[parameters('svclocation')]",
+        "dependsOn": [],
+        "tags": {
+            "imagebuilderTemplate": "AzureImageBuilderSIG",
+            "userIdentity": "enabled"
+                },
+            "identity": {
+                "type": "UserAssigned",
+                        "userAssignedIdentities": {
+                        "<imgBuilderId>": {}
+                            
+                    }
+                    },
+        
+        "properties": {
+            "buildTimeoutInMinutes" : 120,
+
+            "vmProfile": 
+                    {
+                    "vmSize": "Standard_B2s",
+                    "osDiskSizeGB": 64
+                    },
+        
+            "source": {
+                "type": "PlatformImage",
+                    "publisher": "<publisher>",
+                    "offer": "<offer>",
+                    "sku": "<sku>",
+                    "version": "<version>"
+            },
+            "customize": [
+
+        
+                    {
+                        "type": "PowerShell",
+                        "name": "ConfigureBaseline",
+                        "runElevated": true,
+                        "runAsSystem": true,
+                        "scriptUri": "<BaselineConfiguration>"
+                    },
+                    {
+                        "type": "WindowsRestart",
+                        "restartCheckCommand": "write-host 'Restarting for Baseline configuration'",
+                        "restartTimeout": "5m"
+                    },
+                        
+                    {
+                        "type": "WindowsUpdate",
+                        "searchCriteria": "IsInstalled=0",
+                        "filters": [
+                            "exclude:$_.Title -like '*Preview*'",
+                            "include:$true"
+                                    ],
+                        "updateLimit": 40
+                    }
+
+            ],
+            "distribute": 
+            [
+                {   
+                    "type": "SharedImage",
+                    "galleryImageId": "<galleryImageId>",
+                    "runOutputName": "<runOutputName>",
+                    "artifactTags": {
+                        "Environment": "PRD"
+                    },
+                    "replicationRegions": [
+                        "westeurope"
+  
+                    ]
+                }
+            ]
+            }
+        }
+
+    
+    ]
+}    
