@@ -34,7 +34,7 @@ jobs:
           $ManagedIdenityName = "ucorp-aib-cpc-mi"
           $Date = Get-Date -format "yyyyMMdd"
           $imageTemplateName = "W10-CPC-$($Date)"
-          $BaselineConfiguration = "https://raw.githubusercontent.com/iuenk/CPC/main/AIB/Ucorp-CPC-Baseline-Configuration.ps1"
+          $BaselineConfiguration = "https://raw.githubusercontent.com/iuenk/MEM/main/AIB/Ucorp-CPC-Baseline-Configuration.ps1"
           $galleryImageId = "/subscriptions/${{secrets.AZURE_SUBSCRIPTIONID}}/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries/$Sig/images/$SigImageDefName"
           $imgBuilderId = "/subscriptions/${{secrets.AZURE_SUBSCRIPTIONID}}/resourcegroups/$ResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$ManagedIdenityName"
 
@@ -51,7 +51,7 @@ jobs:
           $jsonARMTemplateFile = [string]($env:TEMP + "\2-ARM-Create-AVD-Image-Personal.json")
                 
           # storage location for custom ARM template
-          $templateUrl="https://raw.githubusercontent.com/iuenk/CPC/main/ARMTemplates/2-ARM-Create-Image.json"
+          $templateUrl="https://raw.githubusercontent.com/iuenk/MEM/main/ARMTemplates/2-ARM-Create-Image.json"
 
           # Retrieve the template file and save it in a temp file location
           Invoke-WebRequest -Uri $templateUrl -OutFile $jsonARMTemplateFile -UseBasicParsing
