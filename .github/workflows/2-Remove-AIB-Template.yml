@@ -1,0 +1,67 @@
+name: 2-Remove-AIB-Template
+on: workflow_dispatch
+
+jobs:
+  build:
+    name: 2-Remove-AIB-Template
+    runs-on: windows-2022
+    steps:
+    # Authentication: log on to Azure with the AZURE_AVD_SP secret
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        creds: ${{secrets.AZURE_AUTOMATION_SP}}
+        enable-AzPSSession: true 
+    
+    # Azure PowerShell: Run inline script    
+    - name: Run Azure PowerShell script (inline)
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          # Read the environment variables in PowerShell
+          $ResourceGroup = "Ucorp-CPC-RG"
+          $ApiVersion = "2020-02-14"
+          $Date = Get-Date -format "yyyyMMdd"
+          $imageTemplateName = "W10-CPC-$($Date)"
+
+          # Authentication Setup
+          $currentAzureContext = Get-AzContext
+
+          $azureRmProfile = [Microsoft.Azure.Commands.Common.Authentication.Abstractions.AzureRmProfileProvider]::Instance.Profile
+          $profileClient = New-Object Microsoft.Azure.Commands.ResourceManager.Common.RMProfileClient($azureRmProfile)
+              
+          Write-Verbose ("Tenant: {0}" -f  $currentAzureContext.Subscription.Name)
+          $token = $profileClient.AcquireAccessToken($currentAzureContext.Tenant.TenantId)
+          $accessToken=$token.AccessToken
+
+          # Get Image Build Status and Properties
+          $managementEp = $currentAzureContext.Environment.ResourceManagerUrl
+          $urlBuildStatus = [System.String]::Format("{0}subscriptions/{1}/resourceGroups/$ResourceGroup/providers/Microsoft.VirtualMachineImages/imageTemplates/{2}?api-version=$ApiVersion", $managementEp, $currentAzureContext.Subscription.Id,$imageTemplateName)
+
+          Invoke-RestMethod -Method Get -Uri $urlBuildStatus -Headers  @{"Authorization" = ("Bearer " + $accessToken) } -ContentType application/json  -ErrorVariable notPresent -ErrorAction SilentlyContinue  
+          if ($notPresent) {
+          Write-Output "No AIB template found."
+          }
+          Else {
+            $runState = ""
+            $condition = ($runState -eq "Succeeded")
+            while (!$condition){
+            if ($lastrunState -ne $runState){
+              write-host $imageTemplateName "is" $runState "(waiting for state change)"
+            }
+              $lastrunState = $runState
+              Start-Sleep -Seconds 5
+              $token = $profileClient.AcquireAccessToken($currentAzureContext.Tenant.TenantId)
+              $accessToken=$token.AccessToken
+              $buildStatusResult = Invoke-RestMethod -Method Get -Uri $urlBuildStatus -Headers  @{"Authorization" = ("Bearer " + $accessToken) } -ContentType application/json 
+              $runState = ($buildStatusResult.properties.lastRunStatus).runState
+              $condition = ($runState -eq "Succeeded")       
+            }
+              write-host $imageTemplateName "is" $runState
+
+              # Delete Image Template Artifact when runState is Succeeded
+              $resTemplateId = Get-AzResource -ResourceName $imageTemplateName -ResourceGroupName $ResourceGroup -ResourceType Microsoft.VirtualMachineImages/imageTemplates -ApiVersion $ApiVersion
+              Remove-AzResource -ResourceId $resTemplateId.ResourceId -Force
+            }
+
+        azPSVersion: 'latest'

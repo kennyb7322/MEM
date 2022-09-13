@@ -1,0 +1,113 @@
+name: 1-Create-AIB-Identity
+on: workflow_dispatch
+
+jobs:
+  build:
+    name: 1-Create-AIB-Identity
+    runs-on: windows-2022
+    steps:
+    # Authentication: log on to Azure with the AZURE_AUTOMATION_SP secret
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        creds: ${{secrets.AZURE_AUTOMATION_SP}}
+        enable-AzPSSession: true 
+    
+    # Azure PowerShell: Run inline script    
+    - name: Run Azure PowerShell script (inline)
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          # Read the environment variables in PowerShell
+          $Tags = @{"Environment"="PRD"}
+          $ResourceGroup = "Ucorp-CPC-RG"
+          $ApiVersion = "2020-02-14"
+          $Publisher = "MicrosoftWindowsDesktop"
+          $Offer = "windows-ent-cpc"
+          $Sku = "win10-21h2-ent-cpc-os-g2"
+          $Version = "latest"
+          $Sig = "ucorpcpcsig" 
+          $SigImageDefName = "Ucorp-CPC-Image"
+          $Generation = "V2"
+          $ManagedIdenityName = "ucorp-aib-cpc-mi"
+          $imageRoleDefName = "Azure Image Builder CPC"
+
+          # Get the PowerShell modules
+          'Az.ImageBuilder', 'Az.ManagedServiceIdentity' | ForEach-Object {Install-Module -Name $_ -AllowClobber -Force}
+
+          # Create the resource group if needed
+          try {
+              Get-AzResourceGroup -Name $ResourceGroup -ErrorAction Stop
+          } catch {
+              New-AzResourceGroup -Name $ResourceGroup -Location "westeurope" -Tag $Tags
+          }
+
+          # Register necessary Resources
+          Register-AzProviderFeature -ProviderNamespace Microsoft.VirtualMachineImages -FeatureName VirtualMachineTemplatePreview 
+          Get-AzProviderFeature -ProviderNamespace Microsoft.VirtualMachineImages -FeatureName VirtualMachineTemplatePreview
+
+          Get-AzResourceProvider -ProviderNamespace Microsoft.Compute, Microsoft.KeyVault, Microsoft.Storage, Microsoft.VirtualMachineImages | Where-Object RegistrationState -ne Registered | `
+          Register-AzResourceProvider
+
+          # Create the user identity if needed
+          try {
+              New-AzUserAssignedIdentity -ResourceGroupName $ResourceGroup -Name $ManagedIdenityName -Location "westeurope" -ErrorAction Stop
+              Start-sleep -Seconds 10
+          } catch {
+              write-host $ManagedIdenityName "already exists"
+          }
+          
+          # Assign the identity resource and principal ID's to a variable
+          $identityNamePrincipalId = (Get-AzUserAssignedIdentity -ResourceGroupName $ResourceGroup -Name $ManagedIdenityName).PrincipalId
+
+          # Temp location for the ARM template that will be used by this script (discarded when runbook is finished)
+          $jsonARMTemplateFile = [string]($env:TEMP + "\1-ARM-Create-AIB-Identity.json")
+
+          # storage location for custom ARM template
+          $templateUrl="https://raw.githubusercontent.com/iuenk/CPC/main/ARMTemplates/1-ARM-Create-AIB-Identity.json"
+          
+          # Download the file
+          Invoke-WebRequest -Uri $templateUrl -OutFile $jsonARMTemplateFile -UseBasicParsing
+          
+          # Update json file with new values
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<subscriptionID>',"${{secrets.AZURE_SUBSCRIPTIONID}}") | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<rgName>',"$ResourceGroup") | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace 'Azure Image Builder Service Image Creation Role',"$imageRoleDefName") | Set-Content -Path $jsonARMTemplateFile
+
+          # Verify if role exists else create
+          try {
+              New-AzRoleDefinition -InputFile $jsonARMTemplateFile -ErrorAction Stop
+              Start-sleep -Seconds 30
+          } catch {
+              write-host $imageRoleDefName "already exists"
+          }
+
+          # Grant the Role Definition to the Image Builder Service Principal
+          $RoleAssignParams = @{
+              ObjectId = $identityNamePrincipalId
+              RoleDefinitionName = $imageRoleDefName
+              Scope = "/subscriptions/${{secrets.AZURE_SUBSCRIPTIONID}}/resourceGroups/$ResourceGroup"
+            }
+
+          try {
+              New-AzRoleAssignment @RoleAssignParams -ErrorAction Stop
+              Start-sleep -Seconds 30
+          } catch {
+              write-host $ManagedIdenityName "already exists to role" $imageRoleDefName
+          }
+
+          # Create the Azure Compute Gallery if needed
+          try {
+              New-AzGallery -GalleryName $Sig -ResourceGroupName $ResourceGroup -Location "westeurope"
+          } catch {
+              write-host $Sig "already exists"
+          }
+
+          # Create the VM Image Definition if needed
+          try {
+              New-AzGalleryImageDefinition -GalleryName $Sig -ResourceGroupName $ResourceGroup -Location "westeurope" -Name $SigImageDefName -HyperVGeneration $Generation -OsState generalized -OsType Windows -Publisher $Publisher -Offer $Offer -Sku $Sku -ErrorAction Stop
+          } catch {
+              write-host $SigImageDefName "already exists"
+          }
+
+        azPSVersion: 'latest'

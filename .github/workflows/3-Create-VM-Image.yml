@@ -1,0 +1,48 @@
+name: 3-Create-VM-Image
+on: workflow_dispatch
+
+jobs:
+  build:
+    name: 3-Create-VM-Image
+    runs-on: windows-2022
+    steps:
+    # Authentication: log on to Azure with the AZURE_AVD_SP secret
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        creds: ${{secrets.AZURE_AUTOMATION_SP}}
+        enable-AzPSSession: true 
+    
+    # Azure PowerShell: Run inline script    
+    - name: Run Azure PowerShell script (inline)
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          # Read the environment variables in PowerShell
+          $ResourceGroup = "Ucorp-CPC-RG"
+          $Sig = "ucorpcpcsig"
+          $SigImageDefName = "Ucorp-CPC-Image"
+
+          # Get information from ACG
+          $sourceImgVer = Get-AzGalleryImageVersion -GalleryImageDefinitionName $SigImageDefName -GalleryName $Sig -ResourceGroupName $ResourceGroup |
+          Select-Object -Last 1
+
+          # Check if Image already exists if not start procedure
+          Try 
+          {
+              Get-AzDisk -ResourceGroupName $ResourceGroup -DiskName $sourceImgVer.Name -ErrorAction Stop
+          } 
+          Catch 
+          {
+              # Create Managed Disk from ACG Image Version
+              $diskConfig = New-AzDiskConfig -Location "westeurope" -CreateOption FromImage -GalleryImageReference @{Id = $sourceImgVer.Id}
+              New-AzDisk -Disk $diskConfig -ResourceGroupName $ResourceGroup -DiskName $sourceImgVer.Name
+
+              # create an Image from Managed Disk
+              $CustomDisk = Get-AzDisk -ResourceGroupName $ResourceGroup -DiskName $sourceImgVer.Name
+              $imageConfig = New-AzImageConfig -Location "westeurope" -HyperVGeneration V2
+              $imageConfig = Set-AzImageOsDisk -Image $imageConfig -OsState Generalized -OsType Windows -ManagedDiskId $CustomDisk.Id
+              New-AzImage -ImageName $sourceImgVer.Name -ResourceGroupName $ResourceGroup -Image $imageConfig
+          }
+
+        azPSVersion: 'latest'

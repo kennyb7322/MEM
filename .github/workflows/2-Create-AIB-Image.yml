@@ -1,0 +1,81 @@
+name: 2-Create-AIB-Image
+on: workflow_dispatch
+
+env:
+  AIB_IMAGE_VERSION: 0.1.${{GITHUB.RUN_NUMBER}}     # Using the workflow run number for versioning
+
+jobs:
+  build:
+    name: 2-Create-AIB-Image
+    runs-on: windows-2022
+    steps:
+    # Authentication: log on to Azure with the AZURE_AVD_SP secret
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        creds: ${{secrets.AZURE_AUTOMATION_SP}}
+        enable-AzPSSession: true 
+    
+    # Azure PowerShell: Run inline script    
+    - name: Run Azure PowerShell script (inline)
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          # Read the environment variables in PowerShell
+          $Tags = @{"Environment"="PRD"}
+          $ResourceGroup = "Ucorp-CPC-RG"
+          $ApiVersion = "2020-02-14"
+          $Publisher = "Microsoftwindowsdesktop"
+          $Offer = "windows-ent-cpc"
+          $Sku = "win10-21h2-ent-cpc-os-g2"
+          $Version = "latest"
+          $Sig = "ucorpcpcsig"
+          $SigImageDefName = "Ucorp-CPC-Image"
+          $ManagedIdenityName = "ucorp-aib-cpc-mi"
+          $Date = Get-Date -format "yyyyMMdd"
+          $imageTemplateName = "W10-CPC-$($Date)"
+          $BaselineConfiguration = "https://raw.githubusercontent.com/iuenk/CPC/main/AIB/Ucorp-CPC-Baseline-Configuration.ps1"
+          $galleryImageId = "/subscriptions/${{secrets.AZURE_SUBSCRIPTIONID}}/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/galleries/$Sig/images/$SigImageDefName"
+          $imgBuilderId = "/subscriptions/${{secrets.AZURE_SUBSCRIPTIONID}}/resourcegroups/$ResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$ManagedIdenityName"
+
+          [string]$AIBImageVersion = [System.Environment]::GetEnvironmentVariable('AIB_IMAGE_VERSION')
+
+          # Create the Shared Image Gallery definition if needed
+          try {
+              Get-AzGalleryImageDefinition -GalleryName $Sig -ResourceGroupName $ResourceGroup -Name $SigImageDefName -ErrorAction Stop
+          } catch {
+              New-AzGalleryImageDefinition -GalleryName $Sig -ResourceGroupName $ResourceGroup -Location "westeurope" -Name $SigImageDefName -OsState generalized -OsType Windows -Publisher $Publisher -Offer $Offer -Sku $Sku
+          }
+        
+          # Temp location for the ARM template that will be used by this script (discarded when runbook is finished)
+          $jsonARMTemplateFile = [string]($env:TEMP + "\2-ARM-Create-AVD-Image-Personal.json")
+                
+          # storage location for custom ARM template
+          $templateUrl="https://raw.githubusercontent.com/iuenk/CPC/main/ARMTemplates/2-ARM-Create-Image.json"
+
+          # Retrieve the template file and save it in a temp file location
+          Invoke-WebRequest -Uri $templateUrl -OutFile $jsonARMTemplateFile -UseBasicParsing
+
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<publisher>',$Publisher) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<offer>',$Offer) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<sku>',$Sku) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<version>',$Version) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<runOutputName>',$AIBImageVersion) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<galleryImageId>',$galleryImageId) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<imgBuilderId>',$imgBuilderId) | Set-Content -Path $jsonARMTemplateFile
+          ((Get-Content -path $jsonARMTemplateFile -Raw) -replace '<BaselineConfiguration>',$BaselineConfiguration) | Set-Content -Path $jsonARMTemplateFile
+
+          ## Create a Template Parameter Object (hashtable)
+          $objTemplateParameter = @{
+            "api-version" = $ApiVersion;
+            "imageTemplateName" = $imageTemplateName;
+            "svclocation" = "westeurope";
+           }
+          
+          # Submit the AIB template
+          New-AzResourceGroupDeployment -ResourceGroupName $ResourceGroup -TemplateFile $jsonARMTemplateFile -TemplateParameterObject $objTemplateParameter -Tag $Tags -Verbose
+
+          # Build the image
+          Invoke-AzResourceAction -ResourceName $imageTemplateName -ResourceGroupName $ResourceGroup -ResourceType Microsoft.VirtualMachineImages/imageTemplates -ApiVersion $ApiVersion -Action Run -Force
+
+        azPSVersion: 'latest'
