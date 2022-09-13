@@ -15,25 +15,25 @@ $DestinationPath = Get-AutomationVariable -Name SPOEnrollmentDestinationPath
 
 $uri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices?"
 
-        $DevicesResponse = (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get)
-        $Devices = $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,userDisplayName,osVersion,managedDeviceName,enrolledDateTime
+        $DevicesResponse = (Invoke-RestMethod -Uri $uri -Headers $authHeader -Method Get)
+        $Devices = $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,managementState,managedDeviceName,managementAgent,complianceState,joinType,lastSyncDateTime,osVersion,enrolledDateTime,ownerType
         $DevicesNextLink = $DevicesResponse."@odata.nextLink"
 
         while ($null -ne $DevicesNextLink){
-            $DevicesResponse = (Invoke-RestMethod -Uri $DevicesNextLink -Headers $authToken -Method Get)
+            $DevicesResponse = (Invoke-RestMethod -Uri $DevicesNextLink -Headers $authHeader -Method Get)
             $DevicesNextLink = $DevicesResponse."@odata.nextLink"
-            $Devices += $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,userDisplayName,osVersion,managedDeviceName,enrolledDateTime
+            $Devices += $DevicesResponse.value | Select-Object deviceName,Id,userPrincipalName,managementState,managedDeviceName,managementAgent,complianceState,joinType,lastSyncDateTime,osVersion,enrolledDateTime,ownerType
         }
 
 $uri2 = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities"
 
-        $APDevicesResponse = (Invoke-RestMethod -Uri $uri2 -Headers $authToken -Method Get)
-        $APDevices = $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
+        $APDevicesResponse = (Invoke-RestMethod -Uri $uri2 -Headers $authHeader -Method Get)
+        $APDevices = $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId,azureAdDeviceId,deploymentProfileAssignmentStatus,deploymentProfileAssignedDateTime
         $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
         while ($null -ne $APDevicesNextLink) {
-            $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers $authToken -Method Get)
+            $APDevicesResponse = (Invoke-RestMethod -Uri $APDevicesNextLink -Headers $authHeader -Method Get)
             $APDevicesNextLink = $APDevicesResponse."@odata.nextLink"
-            $APDevices += $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId
+            $APDevices += $APDevicesResponse.value | Select-Object serialNumber,groupTag,model,enrollmentState,managedDeviceId,azureAdDeviceId,deploymentProfileAssignmentStatus,deploymentProfileAssignedDateTime
             }
 
 $DeviceCount = @($Devices).count
@@ -57,7 +57,7 @@ Foreach ($APDevice in $APDevices){
 		Try {
 			$EnrollmentDate = ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(1) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(0) + "-" + ((($device.managedDeviceName -split "_").Item(2)) -split "/").item(2)
 			$Time = ($device.managedDeviceName -split "_").Item(3)
-			$lastSyncDate = ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)	
+			$lastSyncDate = ((($device.lastSyncDateTime -split "T").Item(0)) -split "-").item(2) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(1) + "-" + ((($device.lastSyncDateTime-split "T").Item(0)) -split "-").item(0)	
 		
         } Catch [System.Management.Automation.GetValueInvocationException]{
 
