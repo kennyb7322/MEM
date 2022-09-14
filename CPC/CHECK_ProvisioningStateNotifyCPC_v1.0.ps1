@@ -6,19 +6,22 @@
 #>
 <#
 .SYNOPSIS
-Set extension attribute for CPC devices.
+Check privisioning state, set extension attribute for CPC devices, notify owner.
 .DESCRIPTION
-Set extension attribute for CPC devices.
+Check privisioning state, set extension attribute for CPC devices, notify owner.
 .NOTES
   Version:        1.0
   Author:         Ivo Uenk
-  Creation Date:  2022-09-13
+  Creation Date:  2022-09-14
   Purpose/Change: Testing Pre-prod
 #>
+
+. .\GEN_Send_Mail.ps1
 
 # Variables
 $ExtensionAttributeKey = "extensionAttribute3"
 $ExtensionAttributeValue = "CPCWelcomeMailHaveBeenSent"
+$MailSender = Get-AutomationVariable "MailSender"
 
 $TenantID = Get-AutomationVariable "TenantId"
 $AppId = Get-AutomationVariable "cpcappId"
@@ -40,6 +43,33 @@ $creds = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.ClientCrede
 $context = $authContext.AcquireTokenAsync("https://graph.microsoft.com/", $creds).Result
 $AccessToken = $context.AccessToken
 
+function Get-CPCUser {
+
+[cmdletbinding()]
+
+param
+(
+    $userPrincipalName
+)
+
+    try {
+        $Resource = "users/$userPrincipalName"
+        $UserUri = "https://graph.microsoft.com/v1.0/$($Resource)" 
+        (Invoke-RestMethod -Uri $UserUri -Headers @{"Authorization" = "Bearer $AccessToken"} -Method Get)
+
+    } catch {
+        $ex = $_.Exception
+        $errorResponse = $ex.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($errorResponse)
+        $reader.BaseStream.Position = 0
+        $reader.DiscardBufferedData()
+        $responseBody = $reader.ReadToEnd();
+        Write-Output "Response content:`n$responseBody" -f Red
+        Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+        throw "Get-CPCUser error"
+    }
+}
+
 function Update-AADDevice {
 
 [cmdletbinding()]
@@ -47,6 +77,7 @@ function Update-AADDevice {
 param
 (
     $Id,
+    $ExtensionAttributeKey,
     $ExtensionAttributeValue
 )
 
@@ -57,7 +88,7 @@ param
         $json = @"
 {
     "extensionAttributes": {
-        "extensionAttribute3": "$ExtensionAttributeValue"
+        "$ExtensionAttributeKey": "$ExtensionAttributeValue"
     }
 }
 "@
@@ -101,7 +132,28 @@ while ($null -ne $AllCPCDevicesNextLink) {
     $AllCPCDevicesNextLink = $AllCPCDevicesResponse."@odata.nextLink"
     $AllCPCDevices += $AllCPCDevicesResponse.value | Select-Object id, managedDeviceName, provisioningPolicyName, status, userPrincipalName, servicePlanName
 } 
- 
+
+# Mail message template
+$mailTemplate = @"
+  <html>
+  <body>
+    <h1>Attention: Your new Windows 365 Cloud PC is ready!</h1>
+    <br>
+    Please make sure to sign-in today, so the machine will receive updates immediately. For issues inform servicedesk and use information below.
+    <br>
+    <br>
+    <b>Cloud PC Name:</b> CPC_NAME
+    <br>
+    <b>Owner Name:</b> CPC_OWNER
+    <br>
+    <br>
+    <b>Sign in via URL to start your Cloud PC:</b> https://windows365.microsoft.com
+    <br>
+    <br/>
+  </body>
+</html>
+"@
+
 Foreach ($AADDeviceInfo in $AllAADDevices){
     #Check if Cloud PC is actived
     if ($AADDeviceInfo.AccountEnabled -eq $true){
@@ -115,27 +167,50 @@ Foreach ($AADDeviceInfo in $AllAADDevices){
                 if ($CPCDevice.Status -eq "provisioned") {
                     write-host ""
                     write-host "Cloud PC: '$($AADDeviceInfo.DisplayName)' has been provisioned correct and is ready to be logged into."
-         
-                   try{  
+            
+                    #Gathering user information
+                    write-host "Gathering User information"
+                    try {
+                        write-host "Cloud PC: '$($AADDeviceInfo.DisplayName)' Primary user is: '$($CPCDevice.userPrincipalName)'"
+                        write-host "Finding Email Address for user: '$($CPCDevice.userPrincipalName)'"
+                            
+                        $UserInfo = Get-CPCUser -userPrincipalName $CPCDevice.userPrincipalName
+                        write-host "Primary SMTP for user $($UserInfo.UserPrincipalName) is: $($UserInfo.mail)"
+                    }
+                    catch {
+                        write-output "Unable to get user information" | out-host
+                        write-output $_.Exception.Message | out-host
+                        break
+                    }
+
+                    #Send email
+                    $bodyTemplate = $mailTemplate
+                    $bodyTemplate = $bodyTemplate.Replace('CPC_NAME', $AADDeviceInfo.DisplayName)
+                    $bodyTemplate = $bodyTemplate.Replace('CPC_OWNER', $CPCDevice.userPrincipalName)                 
+  
+                    # Send mail here
+                    $Subject = "Windows 365 Cloud PC '$($AADDeviceInfo.DisplayName)' for '$($CPCDevice.userPrincipalName)' is ready!"
+                    Send-Mail -Recipient $CPCDevice.userPrincipalName -Subject $Subject -Body $bodyTemplate -MailSender $MailSender
+                                
+                    try{  
                         #Set Attribute on Azure AD Device
-                        Write-Host "Setting Attribute on AzureAD Device: $($AADDeviceInfo.DisplayName)"
+                        Write-Host "Setting Attribute on AzureAD Device:'$($AADDeviceInfo.DisplayName)'"
                         Write-Host ""
 
-                        Update-AADDevice -Id $AADDeviceInfo.Id -ExtensionAttributeValue $ExtensionAttributeValue                                 
-                    }                                           
+                        Update-AADDevice -Id $AADDeviceInfo.Id -ExtensionAttributeKey $ExtensionAttributeKey -ExtensionAttributeValue $ExtensionAttributeValue                                    
+                    }                           
                     catch{ 
-                    write-output "Unable to set Attribute on AzureAD Device: $($AADDeviceInfo.DisplayName)" | out-host
+                    write-output "Unable to set Attribute on AzureAD Device:'$AADDeviceInfo.DisplayName'" | out-host
                     write-output $_.Exception.Message | out-host
                     break
                     }
-                }             
-            }           
+                } 
+            }
             catch {
                 write-output "Unable to get Cloud PC Device status in Endpoint Manager" | out-host
                 write-output $_.Exception.Message | out-host
                 break
             }
-      
         }
     }
 } 
